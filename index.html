@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PROP // NIGHT - 4v1 Prototype</title>
+  <style>
+    :root {
+      --ink: #e7e3d8;
+      --muted: #9ba3b2;
+      --panel: rgba(8, 11, 17, 0.86);
+      --panel-solid: #0b0f17;
+      --line: rgba(168, 188, 215, 0.2);
+      --survivor: #5de78e;
+      --killer: #ff5555;
+      --machine: #54a9ff;
+      --gold: #ffd37a;
+      --accent: #6a8cff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #04050a;
+      color: var(--ink);
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      user-select: none;
+    }
+
+    .hidden { display: none !important; }
+
+    #game {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #game canvas { display: block; box-shadow: 0 0 70px rgba(0, 0, 0, 0.85); }
+
+    button, input, select { font-family: inherit; }
+
+    /* ------------------------------------------------------------------ HUD */
+    #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+
+    .panel {
+      position: absolute;
+      padding: 13px 16px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(7px);
+    }
+
+    .role-panel { top: 18px; left: 18px; width: 246px; }
+    .objective-panel { top: 18px; right: 18px; width: 262px; text-align: right; }
+
+    .eyebrow {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2.4px;
+    }
+
+    #roleName {
+      color: var(--survivor);
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-shadow: 0 0 20px rgba(93, 231, 142, 0.3);
+    }
+
+    #roleName[data-role="killer"] { color: var(--killer); text-shadow: 0 0 22px rgba(255, 85, 85, 0.45); }
+    #roleName[data-role="downed"] { color: #b9bec7; text-shadow: none; }
+    #roleName[data-role="dead"], #roleName[data-role="escaped"] { color: #8f97a6; text-shadow: none; }
+
+    #itemLabel {
+      margin-top: 8px;
+      color: var(--gold);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.6px;
+    }
+
+    #roomBadge {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 2px;
+    }
+
+    .map-label {
+      margin-top: 4px;
+      color: var(--gold);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+    }
+
+    .health-label { margin-top: 9px; color: var(--muted); font-size: 11px; letter-spacing: 1.1px; }
+
+    .health-track {
+      height: 7px;
+      margin-top: 5px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 99px;
+    }
+
+    #healthFill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #35bf65, #7df0a4);
+      border-radius: inherit;
+      transition: width 160ms linear, background 160ms linear;
+    }
+
+    #healthFill.low { background: linear-gradient(90deg, #b92525, #ff6b6b); }
+
+    .torch-row { margin-top: 9px; }
+    .torch-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.6px;
+    }
+    .torch-key {
+      padding: 1px 5px;
+      color: var(--gold);
+      border: 1px solid rgba(255, 211, 122, 0.45);
+      border-radius: 4px;
+      font-size: 9px;
+    }
+    .torch-track { height: 6px; margin-top: 5px; }
+    #torchFill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #b8791f, #ffd37a);
+      border-radius: inherit;
+      box-shadow: 0 0 10px rgba(255, 211, 122, 0.55);
+      transition: width 120ms linear, background 160ms linear;
+    }
+    #torchRow.off #torchFill {
+      background: linear-gradient(90deg, #353a43, #5d636e);
+      box-shadow: none;
+    }
+    #torchRow.low #torchFill { animation: torch-warn 650ms ease-in-out infinite; }
+    @keyframes torch-warn { 50% { opacity: 0.4; } }
+
+    .bleed-row { margin-top: 9px; }
+    .bleed-head {
+      color: #ff8a8a;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.6px;
+    }
+    .bleed-track { height: 6px; margin-top: 5px; }
+    #bleedFill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #8e1d1d, #ff6b6b);
+      border-radius: inherit;
+      box-shadow: 0 0 10px rgba(255, 80, 80, 0.5);
+      transition: width 220ms linear;
+    }
+
+    #objectiveCount {
+      color: var(--machine);
+      font-size: 25px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-shadow: 0 0 20px rgba(84, 169, 255, 0.35);
+    }
+
+    #objectiveHint { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+    #hint {
+      position: absolute;
+      bottom: 58px;
+      left: 50%;
+      max-width: 760px;
+      padding: 9px 18px;
+      color: var(--gold);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.35px;
+      text-align: center;
+      text-shadow: 0 2px 12px #000;
+      transform: translateX(-50%);
+    }
+
+    .controls {
+      position: absolute;
+      bottom: 19px;
+      left: 50%;
+      color: rgba(208, 216, 230, 0.52);
+      font-size: 11px;
+      letter-spacing: 1.8px;
+      text-align: center;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+
+    #toast {
+      position: absolute;
+      top: 22px;
+      left: 50%;
+      max-width: 620px;
+      padding: 10px 18px;
+      opacity: 0;
+      color: #f4efe4;
+      background: rgba(6, 9, 14, 0.94);
+      border: 1px solid rgba(255, 211, 122, 0.28);
+      border-radius: 8px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-align: center;
+      pointer-events: none;
+      transform: translate(-50%, -8px);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    #toast.killer { border-color: rgba(255, 85, 85, 0.5); }
+    #toast.success { border-color: rgba(84, 169, 255, 0.55); }
+    #toast.danger { border-color: rgba(255, 85, 85, 0.65); }
+
+    #downBanner {
+      position: absolute;
+      top: 46%;
+      left: 50%;
+      display: none;
+      padding: 14px 30px;
+      color: #d9dce3;
+      background: rgba(10, 7, 12, 0.86);
+      border: 1px solid rgba(255, 85, 85, 0.4);
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 4px;
+      transform: translate(-50%, -50%);
+    }
+
+    #downBanner.show { display: block; }
+
+    #spectateBanner {
+      position: absolute;
+      top: 74px;
+      left: 50%;
+      display: none;
+      padding: 8px 22px;
+      color: #c9d1de;
+      background: rgba(8, 11, 17, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      transform: translateX(-50%);
+    }
+
+    #spectateBanner.show { display: block; }
+
+    /* Skill check */
+    #skillCheck {
+      position: absolute;
+      bottom: 132px;
+      left: 50%;
+      display: none;
+      width: 340px;
+      padding: 10px 14px 12px;
+      background: rgba(5, 8, 13, 0.92);
+      border: 1px solid rgba(93, 231, 142, 0.45);
+      border-radius: 10px;
+      transform: translateX(-50%);
+      text-align: center;
+    }
+
+    #skillCheck.show { display: block; }
+
+    .skill-label {
+      margin-bottom: 8px;
+      color: var(--survivor);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 3px;
+    }
+
+    #skillTrack {
+      position: relative;
+      height: 18px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 9px;
+    }
+
+    #skillZone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 40%;
+      width: 18%;
+      background: linear-gradient(180deg, #7df0a4, #35bf65);
+      box-shadow: 0 0 14px rgba(93, 231, 142, 0.7);
+    }
+
+    #skillMarker {
+      position: absolute;
+      top: -3px;
+      left: 0;
+      width: 4px;
+      height: 22px;
+      background: #fff;
+      border-radius: 2px;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
+      transform: translateX(-2px);
+    }
+
+    /* Ping wheel */
+    #pingWheel {
+      position: fixed;
+      right: 24px;
+      bottom: 90px;
+      z-index: 28;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 10px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+    }
+
+    #pingWheel button {
+      padding: 12px 14px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      cursor: pointer;
+    }
+
+    #pingWheel button:hover { background: rgba(106, 140, 255, 0.28); border-color: var(--accent); }
+
+    /* End-of-round stats */
+    #end-stats { margin-top: 10px; color: var(--ink); }
+    #end-xp { margin-top: 10px; color: var(--gold); font-weight: 700; letter-spacing: 1px; }
+    .stats-table { width: 100%; margin-top: 14px; border-collapse: collapse; font-size: 12px; }
+    .stats-table th, .stats-table td { padding: 6px 8px; border-bottom: 1px solid rgba(168, 188, 215, 0.14); text-align: left; }
+    .stats-table th { color: var(--muted); font-size: 9px; letter-spacing: 1.6px; text-transform: uppercase; }
+    .stats-table td.num { text-align: right; }
+    .stats-table .role-killer { color: var(--killer); font-weight: 700; }
+    .stats-table .role-survivor { color: var(--survivor); font-weight: 700; }
+
+    /* ------------------------------------------------------------ Round intro */
+    #roundIntro {
+      position: fixed;
+      inset: 0;
+      z-index: 24;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 46%, rgba(93, 231, 142, 0.12), transparent 58%),
+        rgba(2, 3, 10, 0.9);
+    }
+    #roundIntro.show { display: flex; animation: intro-screen 3.4s ease forwards; }
+    #roundIntro.killer {
+      background:
+        radial-gradient(circle at 50% 46%, rgba(255, 60, 60, 0.16), transparent 58%),
+        rgba(10, 2, 4, 0.92);
+    }
+    .intro-bar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 12vh;
+      background: #02030a;
+      transform: scaleY(0);
+    }
+    .intro-bar-top { top: 0; transform-origin: top; }
+    .intro-bar-bottom { bottom: 0; transform-origin: bottom; }
+    #roundIntro.show .intro-bar-top { animation: intro-bar-top 3.4s ease forwards; }
+    #roundIntro.show .intro-bar-bottom { animation: intro-bar-bottom 3.4s ease forwards; }
+    .intro-card {
+      position: relative;
+      z-index: 1;
+      opacity: 0;
+      text-align: center;
+      transform: translateY(26px) scale(0.94);
+    }
+    #roundIntro.show .intro-card { animation: intro-card 3.4s cubic-bezier(0.2, 0.9, 0.25, 1) forwards; }
+    .intro-eyebrow {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+    }
+    .intro-role {
+      margin: 10px 0 6px;
+      color: var(--survivor);
+      font-size: clamp(44px, 9vw, 92px);
+      font-weight: 900;
+      letter-spacing: clamp(6px, 1.4vw, 16px);
+      line-height: 1;
+      text-shadow: 0 0 42px rgba(93, 231, 142, 0.5);
+    }
+    #roundIntro.killer .intro-role {
+      color: var(--killer);
+      text-shadow: 0 0 48px rgba(255, 60, 60, 0.65);
+    }
+    .intro-map {
+      color: var(--gold);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 7px;
+    }
+    .intro-tip {
+      max-width: 520px;
+      margin: 18px auto 0;
+      color: rgba(231, 227, 216, 0.75);
+      font-size: 12px;
+      line-height: 1.5;
+      letter-spacing: 0.6px;
+    }
+    @keyframes intro-screen {
+      0% { opacity: 0; }
+      8% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; visibility: hidden; }
+    }
+    @keyframes intro-card {
+      0% { opacity: 0; transform: translateY(30px) scale(0.92); }
+      18% { opacity: 1; transform: translateY(0) scale(1); }
+      80% { opacity: 1; transform: translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateY(-12px) scale(1.03); }
+    }
+    @keyframes intro-bar-top {
+      0% { transform: scaleY(0); }
+      12% { transform: scaleY(1); }
+      80% { transform: scaleY(1); }
+      100% { transform: scaleY(0); }
+    }
+    @keyframes intro-bar-bottom {
+      0% { transform: scaleY(0); }
+      12% { transform: scaleY(1); }
+      80% { transform: scaleY(1); }
+      100% { transform: scaleY(0); }
+    }
+
+    /* ------------------------------------------------------------- Round end */
+    #screen-end { overflow: hidden; }
+    #screen-end .card { position: relative; z-index: 2; }
+    #screen-end.win {
+      background:
+        radial-gradient(circle at 50% 12%, rgba(93, 231, 142, 0.2), transparent 55%),
+        linear-gradient(160deg, #05090c, #08140e 55%, #05090c);
+    }
+    #screen-end.lose {
+      background:
+        radial-gradient(circle at 50% 12%, rgba(255, 70, 70, 0.18), transparent 55%),
+        linear-gradient(160deg, #0b0507, #16080a 55%, #080405);
+    }
+    #screen-end:not(.hidden) .card {
+      animation: end-card-in 620ms cubic-bezier(0.18, 0.9, 0.28, 1.15) both;
+    }
+    #screen-end.win #end-title {
+      text-shadow: 0 0 34px rgba(93, 231, 142, 0.55);
+      animation: end-title-in 900ms cubic-bezier(0.2, 0.9, 0.25, 1.2) both;
+    }
+    #screen-end.lose #end-title {
+      text-shadow: 0 0 36px rgba(255, 70, 70, 0.55);
+      animation: end-title-in 900ms cubic-bezier(0.2, 0.9, 0.25, 1.2) both;
+    }
+    #end-fx { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; }
+    #end-fx span { position: absolute; display: block; }
+    .confetti {
+      top: -24px;
+      width: 9px;
+      height: 14px;
+      border-radius: 2px;
+      animation: confetti-fall linear forwards;
+    }
+    .ember {
+      bottom: -24px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff5a3c;
+      box-shadow: 0 0 14px #ff3b1f;
+      animation: ember-rise linear forwards;
+    }
+    @keyframes end-card-in {
+      0% { opacity: 0; transform: translateY(28px) scale(0.95); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes end-title-in {
+      0% { opacity: 0; transform: scale(1.4); letter-spacing: 16px; }
+      60% { opacity: 1; }
+      100% { opacity: 1; transform: scale(1); letter-spacing: 5px; }
+    }
+    @keyframes confetti-fall {
+      0% { opacity: 0; transform: translate3d(0, 0, 0) rotate(0deg); }
+      8% { opacity: 1; }
+      100% { opacity: 0.9; transform: translate3d(var(--dx), 112vh, 0) rotate(760deg); }
+    }
+    @keyframes ember-rise {
+      0% { opacity: 0; transform: translate3d(0, 0, 0) scale(1); }
+      12% { opacity: 1; }
+      100% { opacity: 0; transform: translate3d(var(--dx), -112vh, 0) scale(0.35); }
+    }
+
+    /* Settings */
+    .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid rgba(168, 188, 215, 0.14); }
+    .settings-row:last-of-type { border-bottom: none; }
+    .settings-row label { color: var(--ink); font-size: 13px; font-weight: 700; }
+    .settings-row small { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; letter-spacing: 0.4px; }
+    .settings-row input[type="range"] { width: 180px; }
+    .settings-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+
+    body.colorblind {
+      --survivor: #3ec7ff;
+      --killer: #ffae00;
+      --machine: #b48bff;
+    }
+
+    .lobby-actions { display: flex; gap: 12px; align-items: flex-end; margin-top: 16px; flex-wrap: wrap; }
+    .lobby-actions .field { margin: 0; }
+    .invite-note { margin-top: 6px; color: var(--muted); font-size: 10px; letter-spacing: 0.8px; }
+
+    #damageFlash {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      opacity: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at center, transparent 32%, rgba(150, 0, 0, 0.55) 100%);
+    }
+
+    #damageFlash.active { animation: hit-flash 300ms ease-out; }
+
+    @keyframes hit-flash { 0% { opacity: 0.95; } 100% { opacity: 0; } }
+
+    /* ----------------------------------------------------------------- Buttons */
+    .btn {
+      padding: 10px 16px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+    }
+
+    .btn:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(168, 188, 215, 0.45); }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.primary { background: linear-gradient(180deg, #3f6bd8, #2b4ba3); border-color: #6a8cff; }
+    .btn.primary:hover { background: linear-gradient(180deg, #4f7ce8, #3559b5); }
+    .btn.ghost { background: transparent; }
+    .btn.tiny { padding: 6px 10px; font-size: 10px; letter-spacing: 1px; }
+
+    input, select {
+      padding: 10px 12px;
+      color: var(--ink);
+      background: rgba(3, 5, 10, 0.75);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 13px;
+      letter-spacing: 0.6px;
+      outline: none;
+    }
+
+    input:focus, select:focus { border-color: var(--accent); }
+
+    /* ----------------------------------------------------------------- Screens */
+    .screen {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow: auto;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(106, 140, 255, 0.12), transparent 42%),
+        radial-gradient(circle at 82% 78%, rgba(255, 85, 85, 0.1), transparent 44%),
+        linear-gradient(160deg, #05070d, #0a0d15 55%, #05070d);
+    }
+
+    .card {
+      width: min(920px, 96vw);
+      padding: 26px 28px 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(10px);
+    }
+
+    .menu-card { width: min(560px, 94vw); text-align: center; }
+
+    h1 {
+      margin: 0;
+      font-size: 40px;
+      font-weight: 900;
+      letter-spacing: 5px;
+    }
+
+    h1 span { color: var(--killer); }
+    h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: 1.5px; }
+    .tagline { margin: 8px 0 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+    .field { display: block; margin-bottom: 14px; text-align: left; }
+    .field > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 2.2px; }
+    .field input { width: 100%; }
+
+    .preview-row {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    .preview-row canvas, .customize-grid canvas {
+      image-rendering: pixelated;
+      background:
+        linear-gradient(45deg, rgba(255,255,255,0.04) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.04) 75%) 0 0 / 16px 16px,
+        linear-gradient(45deg, rgba(255,255,255,0.04) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.04) 75%) 8px 8px / 16px 16px,
+        rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .preview-side { flex: 1; text-align: left; }
+    .note { margin-top: 8px; color: var(--muted); font-size: 11px; letter-spacing: 0.6px; }
+
+    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .join-row { display: flex; gap: 10px; margin-top: 10px; }
+    .join-row input { flex: 1; min-width: 0; text-align: center; }
+    #code-input { text-transform: uppercase; letter-spacing: 4px; }
+
+    .practice-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    .practice-row select { flex: 1; min-width: 130px; }
+    .practice-row .btn { flex-basis: 100%; }
+
+    .status { min-height: 18px; margin-top: 12px; color: var(--gold); font-size: 12px; letter-spacing: 0.6px; }
+
+    /* -------------------------------------------------------------- Customize */
+    .customize-grid { display: grid; grid-template-columns: 150px 1fr 220px; gap: 20px; margin: 18px 0 6px; }
+    .customize-grid .col { display: flex; flex-direction: column; gap: 14px; }
+    .group-label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 2px; }
+
+    .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .swatch {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .swatch.active { border-color: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, 0.5); }
+
+    .options { display: flex; flex-wrap: wrap; gap: 6px; }
+    .options button {
+      padding: 7px 10px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .options button.active { color: #fff; background: rgba(106, 140, 255, 0.35); border-color: var(--accent); }
+    .options.small button { padding: 5px 7px; font-size: 9px; }
+
+    #body-color { width: 100%; height: 34px; padding: 2px; cursor: pointer; }
+
+    #draw-canvas {
+      width: 176px;
+      height: 176px;
+      image-rendering: pixelated;
+      background:
+        linear-gradient(45deg, #2a2f3a 25%, transparent 25%, transparent 75%, #2a2f3a 75%) 0 0 / 16px 16px,
+        linear-gradient(45deg, #2a2f3a 25%, transparent 25%, transparent 75%, #2a2f3a 75%) 8px 8px / 16px 16px,
+        #1b1f28;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .draw-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; letter-spacing: 0.6px; cursor: pointer; }
+
+    .row-end { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+    /* ------------------------------------------------------------------ Lobby */
+    .lobby-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+    .code-box { display: flex; align-items: center; gap: 8px; }
+    #lobby-code {
+      padding: 8px 14px;
+      color: var(--gold);
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px dashed rgba(255, 211, 122, 0.5);
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 6px;
+    }
+
+    .lobby-cols { display: grid; grid-template-columns: 1fr 1.4fr; gap: 22px; }
+    #lobby-count { color: var(--muted); }
+
+    .player-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+    .player-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .player-list .swatch-mini { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.25); }
+    .player-list .pname { flex: 1; font-size: 13px; font-weight: 700; }
+    .player-list .ptag { color: var(--gold); font-size: 9px; letter-spacing: 1.4px; }
+    .player-list .ptag.killer { color: var(--killer); }
+    .player-list .ptag.you { color: var(--accent); }
+
+    .map-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .map-card {
+      padding: 11px 12px;
+      text-align: left;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    .map-card:hover { background: rgba(255, 255, 255, 0.09); }
+    .map-card.active { border-color: var(--accent); background: rgba(106, 140, 255, 0.18); }
+    .map-card strong { display: block; font-size: 13px; letter-spacing: 0.6px; }
+    .map-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+    .map-card .lock { margin-top: 6px; color: var(--muted); font-size: 9px; letter-spacing: 1px; }
+
+    /* ------------------------------------------------------------------- Chat */
+    #chat {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 25;
+      display: flex;
+      flex-direction: column;
+      width: 300px;
+      height: 320px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      overflow: hidden;
+    }
+    #chat header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--muted);
+    }
+    .chat-tabs { display: flex; gap: 4px; }
+    .chat-tabs button {
+      padding: 4px 8px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
+    .chat-tabs button.active { color: #fff; background: rgba(106, 140, 255, 0.3); border-color: var(--accent); }
+
+    #chat-log { flex: 1; overflow-y: auto; padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+    #chat-log .msg { margin-bottom: 5px; word-wrap: break-word; }
+    #chat-log .msg .from { font-weight: 800; }
+    #chat-log .msg .from.killer { color: var(--killer); }
+    #chat-log .msg .from.survivor { color: var(--survivor); }
+    #chat-log .msg .from.you { color: var(--gold); }
+    #chat-log .msg.team { color: #9ad8ff; }
+    #chat-log .msg.system { color: var(--muted); font-style: italic; }
+
+    #chat-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
+    #chat-input { flex: 1; padding: 8px 10px; font-size: 12px; }
+
+    #chat-toggle {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 26;
+      padding: 10px 16px;
+      pointer-events: auto;
+    }
+
+    /* --------------------------------------------------------------- Connecting */
+    #screen-connecting .card { text-align: center; }
+    .spinner {
+      width: 34px;
+      height: 34px;
+      margin: 0 auto 14px;
+      border: 3px solid rgba(255, 255, 255, 0.15);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 900ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 900px) {
+      .role-panel, .objective-panel { top: 10px; }
+      .role-panel { left: 10px; width: 190px; }
+      .objective-panel { right: 10px; width: 205px; }
+      #roleName { font-size: 19px; }
+      #objectiveCount { font-size: 20px; }
+      .controls { font-size: 9px; letter-spacing: 1px; }
+      .customize-grid { grid-template-columns: 1fr; }
+      .lobby-cols { grid-template-columns: 1fr; }
+      #chat { width: 260px; height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+
+  <div id="hud" class="hidden">
+    <div class="panel role-panel">
+      <div class="eyebrow">YOUR ROLE</div>
+      <div id="roleName" data-role="survivor">CONNECTING</div>
+      <div id="roomBadge">ROOM ----</div>
+      <div id="mapLabel" class="map-label">MAP —</div>
+      <div id="healthLabel" class="health-label">100 HP</div>
+      <div class="health-track"><div id="healthFill"></div></div>
+      <div id="bleedRow" class="bleed-row hidden">
+        <div class="bleed-head"><span id="bleedLabel">BLEEDING OUT</span></div>
+        <div class="health-track bleed-track"><div id="bleedFill"></div></div>
+      </div>
+      <div id="powerLabel" class="note">HUNTER POWER x1.00</div>
+      <div id="itemLabel"></div>
+      <div id="torchRow" class="torch-row hidden">
+        <div class="torch-head"><span id="torchLabel">TORCH 100%</span><span class="torch-key">L</span></div>
+        <div class="health-track torch-track"><div id="torchFill"></div></div>
+      </div>
+    </div>
+
+    <div class="panel objective-panel">
+      <div class="eyebrow">PROPMACHINES</div>
+      <div id="objectiveCount">0 / 4</div>
+      <div id="objectiveHint">Hold F near a machine to repair it.</div>
+    </div>
+
+    <div id="toast"></div>
+    <div id="downBanner">YOU ARE DOWNED</div>
+    <div id="spectateBanner">SPECTATING</div>
+    <div id="hint">Connecting to the hunt...</div>
+
+    <div id="skillCheck">
+      <div class="skill-label">PRESS SPACE IN THE GREEN ZONE</div>
+      <div id="skillTrack"><div id="skillZone"></div><div id="skillMarker"></div></div>
+    </div>
+
+    <button id="btn-exit" class="btn tiny" style="position:absolute;bottom:52px;left:18px;pointer-events:auto">LEAVE MATCH</button>
+    <div id="controlsBar" class="controls">WASD MOVE &nbsp;·&nbsp; E MORPH &nbsp;·&nbsp; F REPAIR/ESCAPE &nbsp;·&nbsp; R REVIVE &nbsp;·&nbsp; G THROW &nbsp;·&nbsp; H LOCKER &nbsp;·&nbsp; X ITEM &nbsp;·&nbsp; L TORCH &nbsp;·&nbsp; SPACE CHECK &nbsp;·&nbsp;·&nbsp; V PING &nbsp;·&nbsp; T CHAT</div>
+  </div>
+
+  <div id="roundIntro">
+    <div class="intro-bar intro-bar-top"></div>
+    <div class="intro-bar intro-bar-bottom"></div>
+    <div class="intro-card">
+      <div class="intro-eyebrow" id="introEyebrow">THE HUNT BEGINS</div>
+      <div class="intro-role" id="introRole">SURVIVOR</div>
+      <div class="intro-map" id="introMap">ASYLUM</div>
+      <div class="intro-tip" id="introTip">Repair the propmachines and escape.</div>
+    </div>
+  </div>
+
+  <div id="pingWheel" class="hidden">
+    <button type="button" data-kind="killer">KILLER HERE</button>
+    <button type="button" data-kind="repair">REPAIR HERE</button>
+    <button type="button" data-kind="help">NEED HELP</button>
+    <button type="button" data-kind="regroup">REGROUP</button>
+  </div>
+
+  <div id="damageFlash"></div>
+
+  <button id="chat-toggle" class="btn hidden">CHAT</button>
+  <aside id="chat" class="hidden">
+    <header>
+      <span id="chat-title">ROOM CHAT</span>
+      <div class="chat-tabs">
+        <button type="button" data-channel="all" class="active">ALL</button>
+        <button type="button" data-channel="team">TEAM</button>
+      </div>
+    </header>
+    <div id="chat-log"></div>
+    <form id="chat-form">
+      <input id="chat-input" maxlength="160" placeholder="Say something..." autocomplete="off" />
+      <button type="submit" class="btn tiny">SEND</button>
+    </form>
+  </aside>
+
+  <div id="screen-connecting" class="screen">
+    <div class="card" style="width:min(360px,90vw);text-align:center">
+      <div class="spinner"></div>
+      <h2>CONNECTING</h2>
+      <div class="note" id="connect-note">Reaching the hunt server...</div>
+    </div>
+  </div>
+
+  <div id="screen-menu" class="screen hidden">
+    <div class="card menu-card">
+      <h1>PROP <span>//</span> NIGHT</h1>
+      <p class="tagline">A 4v1 prop-hunt prototype. Morph into furniture, repair the propmachines, and survive the Killer.</p>
+
+      <label class="field">
+        <span>YOUR NAME</span>
+        <input id="name-input" maxlength="16" placeholder="Player" autocomplete="off" />
+      </label>
+
+      <div class="preview-row">
+        <canvas id="menu-preview" width="72" height="72" style="width:72px;height:72px"></canvas>
+        <div class="preview-side">
+          <button id="btn-customize" class="btn ghost">CUSTOMIZE LOOK</button>
+          <div id="menu-look-note" class="note">Default look</div>
+          <div id="menu-level" class="note"></div>
+        </div>
+      </div>
+
+      <div class="btn-grid">
+        <button id="btn-create" class="btn primary">CREATE ROOM</button>
+        <button id="btn-quick" class="btn">QUICK PLAY</button>
+      </div>
+
+      <label class="field" style="margin-top:12px">
+        <span>ROOM PASSWORD (OPTIONAL)</span>
+        <input id="password-input" maxlength="32" placeholder="Leave empty for a public room" autocomplete="off" />
+      </label>
+
+      <div class="join-row">
+        <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off" />
+        <input id="join-password" maxlength="32" placeholder="PASSWORD" autocomplete="off" />
+        <button id="btn-join" class="btn">JOIN</button>
+      </div>
+
+      <div class="practice-row">
+        <select id="practice-map"></select>
+        <select id="practice-role">
+          <option value="survivor">Play as Survivor</option>
+          <option value="killer">Play as Killer</option>
+        </select>
+        <button id="btn-practice" class="btn ghost">PRACTICE (OFFLINE)</button>
+      </div>
+
+      <button id="btn-settings" class="btn ghost" style="width:100%;margin-top:10px">SETTINGS</button>
+
+      <div id="menu-status" class="status"></div>
+    </div>
+  </div>
+
+  <div id="screen-settings" class="screen hidden">
+    <div class="card" style="width:min(520px,94vw)">
+      <h2>SETTINGS</h2>
+      <div class="note">Saved on this device.</div>
+      <div class="settings-row">
+        <label for="set-volume">MASTER VOLUME<small>Procedural audio</small></label>
+        <input id="set-volume" type="range" min="0" max="100" value="60" />
+      </div>
+      <div class="settings-row">
+        <label for="set-shake">CAMERA SHAKE<small>Hit feedback</small></label>
+        <input id="set-shake" type="checkbox" checked />
+      </div>
+      <div class="settings-row">
+        <label for="set-colorblind">COLORBLIND PALETTE<small>Blue survivor, amber killer</small></label>
+        <input id="set-colorblind" type="checkbox" />
+      </div>
+      <div class="row-end">
+        <button id="btn-settings-back" class="btn primary">BACK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-customize" class="screen hidden">
+    <div class="card">
+      <h2>CUSTOMIZE LOOK</h2>
+      <div class="note">Pick a body color, hat and eyes, or draw your own 16x16 skin.</div>
+
+      <div class="customize-grid">
+        <div class="col">
+          <canvas id="customize-preview" width="120" height="120" style="width:120px;height:120px"></canvas>
+          <div id="look-note" class="note"></div>
+        </div>
+
+        <div class="col">
+          <div class="group">
+            <span class="group-label">BODY COLOR</span>
+            <div id="body-swatches" class="swatches"></div>
+            <input id="body-color" type="color" value="#49cf79" />
+          </div>
+          <div class="group">
+            <span class="group-label">HAT</span>
+            <div id="hat-options" class="options"></div>
+          </div>
+          <div class="group">
+            <span class="group-label">EYES</span>
+            <div id="eyes-options" class="options"></div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="group">
+            <span class="group-label">CUSTOM DRAWING (16x16)</span>
+            <canvas id="draw-canvas" width="16" height="16"></canvas>
+            <div id="draw-tools" class="options small" style="margin-top:8px">
+              <button type="button" data-tool="pencil" class="active">PENCIL</button>
+              <button type="button" data-tool="eraser">ERASER</button>
+              <button type="button" data-tool="fill">FILL</button>
+              <button type="button" data-tool="pick">PICK</button>
+            </div>
+            <div id="draw-swatches" class="swatches" style="margin-top:8px"></div>
+            <div class="draw-actions">
+              <button id="draw-clear" class="btn tiny">CLEAR</button>
+              <label class="check"><input type="checkbox" id="use-drawing" /> USE MY DRAWING</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row-end">
+        <button id="btn-customize-back" class="btn ghost">BACK</button>
+        <button id="btn-customize-save" class="btn primary">SAVE LOOK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-lobby" class="screen hidden">
+    <div class="card">
+      <div class="lobby-head">
+        <div>
+          <div class="eyebrow">LOBBY</div>
+          <h2 id="lobby-name">Room</h2>
+        </div>
+        <div class="code-box">
+          <div>
+            <div class="eyebrow">JOIN CODE</div>
+            <span id="lobby-code">----</span>
+          </div>
+          <button id="btn-copy" class="btn tiny">COPY</button>
+        </div>
+      </div>
+
+      <div class="lobby-cols">
+        <div>
+          <div class="eyebrow">PLAYERS <span id="lobby-count"></span></div>
+          <ul id="lobby-players" class="player-list"></ul>
+        </div>
+        <div>
+          <div class="eyebrow">MAP</div>
+          <div id="lobby-maps" class="map-cards"></div>
+        </div>
+      </div>
+
+      <div class="lobby-actions">
+        <label class="field">
+          <span>PREFERRED ROLE</span>
+          <select id="lobby-preference">
+            <option value="any">No preference</option>
+            <option value="survivor">Survivor</option>
+            <option value="killer">Killer</option>
+          </select>
+        </label>
+        <button id="btn-invite" class="btn tiny">COPY INVITE LINK</button>
+      </div>
+      <div id="lobby-password-note" class="invite-note"></div>
+
+      <div id="lobby-status" class="status"></div>
+
+      <div class="row-end">
+        <button id="btn-leave" class="btn ghost">LEAVE</button>
+        <button id="btn-start" class="btn primary">START MATCH</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-end" class="screen hidden">
+    <div id="end-fx"></div>
+    <div class="card" style="width:min(760px,94vw);text-align:center">
+      <div class="eyebrow" id="end-eyebrow">ROUND OVER</div>
+      <h1 id="end-title">ESCAPED</h1>
+      <p id="end-reason" class="tagline"></p>
+      <div id="end-stats" class="note"></div>
+      <div id="end-xp" class="note"></div>
+      <div class="row-end" style="justify-content:center;margin-top:20px">
+        <button id="btn-end-lobby" class="btn primary">RETURN TO LOBBY</button>
+        <button id="btn-end-leave" class="btn ghost">LEAVE</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/phaser/phaser.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/art.js"></script>
+  <script src="/js/audio.js"></script>
+  <script src="/js/game.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
