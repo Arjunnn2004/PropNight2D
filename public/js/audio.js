@@ -10,6 +10,18 @@ window.PN = window.PN || {};
   let audioContext = null;
   let master = null;
   let volume = 0.6;
+  let pendingPan = null;
+
+  function route(node, pan) {
+    if (pan == null || !audioContext.createStereoPanner) {
+      node.connect(master);
+      return;
+    }
+    const panner = audioContext.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+    node.connect(panner);
+    panner.connect(master);
+  }
 
   function ensure() {
     if (!audioContext) {
@@ -43,6 +55,7 @@ window.PN = window.PN || {};
       gain = 0.15,
       delay = 0,
       attack = 0.012,
+      pan = pendingPan,
     } = options;
 
     const start = ac.currentTime + delay;
@@ -55,7 +68,7 @@ window.PN = window.PN || {};
     amp.gain.exponentialRampToValueAtTime(gain, start + attack);
     amp.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     osc.connect(amp);
-    amp.connect(master);
+    route(amp, pan);
     osc.start(start);
     osc.stop(start + duration + 0.03);
   }
@@ -63,7 +76,7 @@ window.PN = window.PN || {};
   function noise(options) {
     const ac = ensure();
     if (!ac) return;
-    const { duration = 0.25, gain = 0.2, filter = 1200, delay = 0 } = options;
+    const { duration = 0.25, gain = 0.2, filter = 1200, delay = 0, pan = pendingPan } = options;
     const start = ac.currentTime + delay;
     const length = Math.max(1, Math.floor(ac.sampleRate * duration));
     const buffer = ac.createBuffer(1, length, ac.sampleRate);
@@ -82,7 +95,7 @@ window.PN = window.PN || {};
     amp.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     source.connect(lowpass);
     lowpass.connect(amp);
-    amp.connect(master);
+    route(amp, pan);
     source.start(start);
   }
 
@@ -141,6 +154,43 @@ window.PN = window.PN || {};
     sprint() {
       noise({ duration: 0.35, gain: 0.16, filter: 1600 });
       tone({ freq: 150, endFreq: 320, duration: 0.3, type: 'sawtooth', gain: 0.08 });
+    },
+    lungeWindup() {
+      tone({ freq: 90, endFreq: 160, duration: 0.42, type: 'sawtooth', gain: 0.18 });
+      noise({ duration: 0.38, gain: 0.12, filter: 420 });
+    },
+    lungeRecover() {
+      tone({ freq: 180, endFreq: 70, duration: 0.5, type: 'triangle', gain: 0.12 });
+    },
+    pickup() {
+      tone({ freq: 520, endFreq: 780, duration: 0.12, gain: 0.08, type: 'triangle' });
+    },
+    install() {
+      tone({ freq: 180, endFreq: 90, duration: 0.14, type: 'square', gain: 0.14 });
+      tone({ freq: 620, endFreq: 880, duration: 0.18, gain: 0.08, type: 'triangle', delay: 0.14 });
+    },
+    blood() {
+      noise({ duration: 0.08, gain: 0.07, filter: 320 });
+    },
+    gasp() {
+      noise({ duration: 0.32, gain: 0.2, filter: 1400 });
+      tone({ freq: 300, endFreq: 180, duration: 0.28, type: 'triangle', gain: 0.1 });
+    },
+    breath() {
+      noise({ duration: 0.42, gain: 0.09, filter: 780 });
+    },
+    creak() {
+      tone({ freq: 120, endFreq: 90, duration: 0.65, type: 'sawtooth', gain: 0.06 });
+    },
+    hum() {
+      tone({ freq: 58, duration: 1.4, gain: 0.05, type: 'sine', attack: 0.3 });
+    },
+    blackout() {
+      noise({ duration: 0.7, gain: 0.2, filter: 260 });
+      tone({ freq: 120, endFreq: 40, duration: 1.1, type: 'sawtooth', gain: 0.14 });
+    },
+    fog() {
+      noise({ duration: 1.4, gain: 0.12, filter: 480 });
     },
     stun() {
       noise({ duration: 0.3, gain: 0.25, filter: 400 });
@@ -204,8 +254,21 @@ window.PN = window.PN || {};
     }
   }
 
+  function spatial(name, pan) {
+    if (!sounds[name]) return;
+    pendingPan = Math.max(-1, Math.min(1, Number(pan) || 0));
+    try {
+      sounds[name]();
+    } catch (error) {
+      // Audio is best-effort; never let it break gameplay.
+    } finally {
+      pendingPan = null;
+    }
+  }
+
   PN.Audio = {
     play,
+    spatial,
     setVolume,
     unlock: ensure,
     get volume() {

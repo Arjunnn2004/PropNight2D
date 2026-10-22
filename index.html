@@ -125,6 +125,7 @@
     }
 
     #healthFill.low { background: linear-gradient(90deg, #b92525, #ff6b6b); }
+    #healthFill.wounded { background: linear-gradient(90deg, #8b1d2b, #d9556b); }
 
     .torch-row { margin-top: 9px; }
     .torch-head {
@@ -562,6 +563,16 @@
 
     #damageFlash.active { animation: hit-flash 300ms ease-out; }
 
+    #heartbeatVignette {
+      position: fixed;
+      inset: 0;
+      z-index: 18;
+      opacity: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at center, transparent 18%, rgba(120, 0, 8, 0.72) 100%);
+      transition: opacity 120ms linear;
+    }
+
     @keyframes hit-flash { 0% { opacity: 0.95; } 100% { opacity: 0; } }
 
     /* ----------------------------------------------------------------- Buttons */
@@ -910,7 +921,7 @@
     </div>
 
     <button id="btn-exit" class="btn tiny" style="position:absolute;bottom:52px;left:18px;pointer-events:auto">LEAVE MATCH</button>
-    <div id="controlsBar" class="controls">WASD MOVE &nbsp;·&nbsp; E MORPH &nbsp;·&nbsp; F REPAIR/ESCAPE &nbsp;·&nbsp; R REVIVE &nbsp;·&nbsp; G THROW &nbsp;·&nbsp; H LOCKER &nbsp;·&nbsp; X ITEM &nbsp;·&nbsp; L TORCH &nbsp;·&nbsp; SPACE CHECK &nbsp;·&nbsp;·&nbsp; V PING &nbsp;·&nbsp; T CHAT</div>
+    <div id="controlsBar" class="controls">WASD MOVE &nbsp;&middot;&nbsp; E USE/INSTALL | M MORPH &nbsp;&middot;&nbsp; F REPAIR/ESCAPE &nbsp;&middot;&nbsp; R REVIVE &nbsp;&middot;&nbsp; G THROW &nbsp;&middot;&nbsp; H LOCKER &nbsp;&middot;&nbsp; X ITEM &nbsp;&middot;&nbsp; L TORCH &nbsp;&middot;&nbsp; SHIFT LUNGE/HOLD BREATH &nbsp;&middot;&nbsp; Q PULSE &nbsp;&middot;&nbsp; C TRAP | SPACE CHECK &nbsp;&middot;&nbsp; V PING &nbsp;&middot;&nbsp; T CHAT</div>
   </div>
 
   <div id="roundIntro">
@@ -920,7 +931,7 @@
       <div class="intro-eyebrow" id="introEyebrow">THE HUNT BEGINS</div>
       <div class="intro-role" id="introRole">SURVIVOR</div>
       <div class="intro-map" id="introMap">ASYLUM</div>
-      <div class="intro-tip" id="introTip">Repair the propmachines and escape.</div>
+      <div class="intro-tip" id="introTip">Find a fuse, install it, then repair the propmachine.</div>
     </div>
   </div>
 
@@ -932,6 +943,7 @@
   </div>
 
   <div id="damageFlash"></div>
+  <div id="heartbeatVignette"></div>
 
   <button id="chat-toggle" class="btn hidden">CHAT</button>
   <aside id="chat" class="hidden">
@@ -960,7 +972,7 @@
   <div id="screen-menu" class="screen hidden">
     <div class="card menu-card">
       <h1>PROP <span>//</span> NIGHT</h1>
-      <p class="tagline">A 4v1 prop-hunt prototype. Morph into furniture, repair the propmachines, and survive the Killer.</p>
+      <p class="tagline">A 4v1 horror prototype. Find fuses, install them, repair the propmachines, and survive the Killer.</p>
 
       <label class="field">
         <span>YOUR NAME</span>

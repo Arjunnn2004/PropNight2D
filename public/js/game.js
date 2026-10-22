@@ -17,16 +17,28 @@ window.PN = window.PN || {};
   const PREVIEW = 36;
 
   // Killer ability defaults, used only when the server omits abilities config.
-  const SPRINT_SPEED_MULTIPLIER = 2.4;
+  const LUNGE_SPEED_MULTIPLIER = 1.6;
+  const LUNGE_WINDUP_MS = 420;
+  const LUNGE_DURATION_MS = 620;
+  const LUNGE_RECOVERY_MS = 760;
+  const LUNGE_RECOVERY_SPEED = 0.52;
   const TRAP_RADIUS = 26;
-  const TRAP_ARM_MS = 600;
+  const TRAP_ARM_MS = 700;
   const TRAP_LIFETIME_MS = 30000;
+  const TRACK_PING_MS = 780;
+  const TRACK_JITTER_ANGLE = 0.2;
+  const TRACK_JITTER_DISTANCE = 0.24;
 
-  const BLEEDOUT_SECONDS = 45;
+  const WOUNDED_SPEED_MULTIPLIER = 0.9;
+  const MACHINE_REGRESS = 26;
+  const REVIVE_DECAY_PER_SECOND = 24;
+  const FINISH_DECAY_PER_SECOND = 30;
+  const BLEEDOUT_SECONDS = 70;
   const FINISH_RANGE = 56;
-  const FINISH_SECONDS = 2.5;
-  const EXIT_RANGE = 56;
-  const ESCAPE_SECONDS = 3.5;
+  const FINISH_SECONDS = 4.5;
+  const EXIT_RANGE = 64;
+  const ESCAPE_SECONDS = 9;
+  const ESCAPE_DECAY_PER_SECOND = 45;
   const SKILL_DURATION_MS = 1400;
   const SKILL_WINDOW_MS = 240;
   const SKILL_TOLERANCE_MS = 160;
@@ -39,8 +51,13 @@ window.PN = window.PN || {};
   const THROW_LIFETIME_MS = 900;
   const THROW_STUN_MS = 1600;
   const THROW_COOLDOWN_MS = 9000;
+  const NOISE_STEP_MS = 1000;
+  const NOISE_RANGE = 760;
   const LOCKER_RANGE = 48;
   const LOCKER_EJECT_ROOT_MS = 1200;
+  const BREATH_HOLD_MAX_MS = 5200;
+  const BREATH_RECOVER_PER_SECOND = 950;
+  const ITEM_USE_RANGE = 96;
   const FLASHLIGHT_RANGE = 300;
   const FLASHLIGHT_STUN_MS = 1800;
   const TOOLBOX_PROGRESS = 40;
@@ -49,13 +66,25 @@ window.PN = window.PN || {};
   const ALARM_COOLDOWN_MS = 9000;
   const FOG_VISION_MULTIPLIER = 0.55;
   const SURVIVOR_ITEMS = ['flashlight', 'toolbox', 'medkit'];
-  const TORCH_DRAIN_SECONDS = 75;
-  const TORCH_RECHARGE_SECONDS = 18;
-  const TORCH_RANGE_MIN = 130;
-  const TORCH_RANGE_MAX = 330;
-  const TORCH_HALF_ANGLE = 0.52;
-  const KILLER_DARKNESS = 0.7;
-  const SURVIVOR_DARKNESS = 0.78;
+  const SCAVENGE_TYPES = ['medkit', 'toolbox', 'battery'];
+  const SCAVENGE_MAX = 5;
+  const SCAVENGE_RANGE = 52;
+  const PART_PICKUP_RANGE = 58;
+  const PART_INSTALL_RANGE = 76;
+  const BLACKOUT_MIN_DELAY_MS = 32000;
+  const BLACKOUT_MAX_DELAY_MS = 55000;
+  const BLACKOUT_DURATION_MS = 8500;
+  const FOG_BURST_MIN_DELAY_MS = 38000;
+  const FOG_BURST_MAX_DELAY_MS = 62000;
+  const FOG_BURST_DURATION_MS = 12000;
+  const FOG_BURST_RADIUS = 230;
+  const TORCH_DRAIN_SECONDS = 95;
+  const TORCH_RECHARGE_SECONDS = 22;
+  const TORCH_RANGE_MIN = 110;
+  const TORCH_RANGE_MAX = 280;
+  const TORCH_HALF_ANGLE = 0.4;
+  const KILLER_DARKNESS = 0.74;
+  const SURVIVOR_DARKNESS = 0.82;
 
   function tileCenter(col, row) {
     return { x: col * TILE + TILE / 2, y: row * TILE + TILE / 2 };
@@ -190,6 +219,7 @@ function serializePlayer(player, config, now = 0, viewer = null) {
       y: Math.round(player.y * 10) / 10,
       angle: Math.round(player.angle * 1000) / 1000,
       health: player.health,
+      wounded: !!player.wounded,
       downed: player.downed,
       dead: !!player.dead,
       escaped: !!player.escaped,
@@ -202,6 +232,8 @@ function serializePlayer(player, config, now = 0, viewer = null) {
           : 0,
       item: isSelf ? player.item : null,
       itemUsed: isSelf ? !!player.itemUsed : false,
+      carryingPart: isSelf ? !!player.carryingPart : false,
+      breath: isSelf ? Math.round(((player.breathMs || 0) / BREATH_HOLD_MAX_MS) * 100) : 0,
       throwReadyAt: isSelf ? player.throwReadyAt : 0,
       finishing: !!player.finishing,
       morphed: player.morphed,
@@ -211,6 +243,8 @@ function serializePlayer(player, config, now = 0, viewer = null) {
       reviving: !!player.reviving,
       reviveProgress: player.downed ? Math.round(player.reviveProgress || 0) : 0,
       sprinting: !!(player.sprintUntil > now),
+      lungeWindup: !!(player.lungeWindupUntil > now),
+      lungeRecovering: !!(player.lungeRecoverUntil > now),
       rooted: !!(player.rootUntil > now),
     };
   }
@@ -222,14 +256,33 @@ function serializePlayer(player, config, now = 0, viewer = null) {
       y: machine.y,
       progress: Math.round(machine.progress * 10) / 10,
       repaired: machine.repaired,
+      installed: !!machine.installed,
     };
   }
 
-function nearestMachine(machines, x, y, range, layout) {
+  function serializePart(part) {
+    return {
+      id: part.id,
+      x: Math.round(part.x),
+      y: Math.round(part.y),
+    };
+  }
+
+  function serializeSupply(supply) {
+    return {
+      id: supply.id,
+      type: supply.type,
+      x: Math.round(supply.x),
+      y: Math.round(supply.y),
+    };
+  }
+
+function nearestMachine(machines, x, y, range, layout, requireInstalled = false) {
   let nearest = null;
   let nearestDistance = Infinity;
   for (const machine of machines) {
     if (machine.repaired) continue;
+    if (requireInstalled && !machine.installed) continue;
     const d = dist(x, y, machine.x, machine.y);
     if (d > range || d >= nearestDistance) continue;
     if (layout && !hasLineOfSight(layout, x, y, machine.x, machine.y)) continue;
@@ -242,7 +295,24 @@ function nearestMachine(machines, x, y, range, layout) {
   class LocalSim {
     constructor(map, config, human, botCount) {
       this.map = map;
-      this.config = config;
+      this.config = Object.assign({
+        maxHealth: 100,
+        woundedHealth: 50,
+        woundedSpeedMultiplier: WOUNDED_SPEED_MULTIPLIER,
+        meleeDamage: 50,
+        attackCooldownMs: 1300,
+        repairSeconds: 22,
+        partPickupRange: PART_PICKUP_RANGE,
+        partInstallRange: PART_INSTALL_RANGE,
+        reviveRange: 64,
+        reviveSeconds: 7.5,
+        reviveHealth: 60,
+        bleedoutSeconds: BLEEDOUT_SECONDS,
+        escapeSeconds: ESCAPE_SECONDS,
+        exitRange: EXIT_RANGE,
+        finishSeconds: FINISH_SECONDS,
+        finishRange: FINISH_RANGE,
+      }, config || {});
       this.layout = map.layout;
       this.now = 0;
       this.events = [];
@@ -267,9 +337,19 @@ function nearestMachine(machines, x, y, range, layout) {
           y: center.y,
           progress: 0,
           repaired: false,
+          installed: false,
         };
       });
 
+      const partTiles = (map.partTiles && map.partTiles.length > 0)
+        ? map.partTiles
+        : map.machineTiles;
+      this.parts = partTiles.slice(0, 5).map(([col, row], index) => {
+        const center = tileCenter(col, row);
+        return { id: `fuse-${index + 1}`, x: center.x, y: center.y };
+      });
+
+      this.scavenge = [];
       this.traps = [];
       this.trapSeq = 0;
 
@@ -293,6 +373,28 @@ function nearestMachine(machines, x, y, range, layout) {
       this.exitOpen = false;
       this.projectiles = [];
       this.projectileSeq = 0;
+      this.blackoutActive = false;
+      this.blackoutUntil = 0;
+      this.nextBlackoutAt =
+        BLACKOUT_MIN_DELAY_MS + Math.random() * (BLACKOUT_MAX_DELAY_MS - BLACKOUT_MIN_DELAY_MS);
+      this.fogBurst = null;
+      this.nextFogBurstAt =
+        FOG_BURST_MIN_DELAY_MS + Math.random() * (FOG_BURST_MAX_DELAY_MS - FOG_BURST_MIN_DELAY_MS);
+      this.nextHeartbeatAt = 0;
+
+      const supplyPoints = this.floorTiles.filter((point) => {
+        if (dist(point.x, point.y, this.exit.x, this.exit.y) < 130) return false;
+        return !this.machines.some(
+          (machine) => dist(point.x, point.y, machine.x, machine.y) < 150,
+        );
+      }).sort(() => Math.random() - 0.5);
+      const count = Math.min(SCAVENGE_MAX, map.scavengeCount || SCAVENGE_MAX, supplyPoints.length);
+      this.scavenge = supplyPoints.slice(0, count).map((point, index) => ({
+        id: `supply-${index + 1}`,
+        type: SCAVENGE_TYPES[index % SCAVENGE_TYPES.length],
+        x: point.x,
+        y: point.y,
+      }));
 
       this.human = this.addPlayer({
         id: this.humanId,
@@ -334,15 +436,21 @@ function nearestMachine(machines, x, y, range, layout) {
         input: {
           up: false, down: false, left: false, right: false,
           repair: false, revive: false, sprint: false, track: false, trap: false,
-          finish: false, throw: false, locker: false, useItem: false,
+          finish: false, throw: false, locker: false, useItem: false, interact: false,
         },
         health: this.config.maxHealth,
+        wounded: false,
         downed: false,
         dead: false,
         bleedOutAt: 0,
         escaped: false,
         escapeProgress: 0,
         hiddenIn: null,
+        carryingPart: null,
+        breathMs: BREATH_HOLD_MAX_MS,
+        gasped: false,
+        nextBloodAt: 0,
+        nextWoundedBreathAt: 0,
         finishProgress: 0,
         finishing: false,
         finishingId: null,
@@ -364,8 +472,12 @@ function nearestMachine(machines, x, y, range, layout) {
         isRepairing: false,
         sprintUntil: -9999,
         nextSprintAt: -9999,
+        lungeWindupUntil: -9999,
+        lungeRecoverUntil: -9999,
+        lungeStarted: false,
         trackUntil: -9999,
         nextTrackAt: -9999,
+        nextTrackPingAt: 0,
         nextTrapAt: -9999,
         rootUntil: -9999,
         lastAttackAt: -9999,
@@ -415,6 +527,7 @@ function nearestMachine(machines, x, y, range, layout) {
       this.human.input.throw = !!input.throw;
       this.human.input.locker = !!input.locker;
       this.human.input.useItem = !!input.useItem;
+      this.human.input.interact = !!input.interact;
     }
 
     pressed(player, key) {
@@ -453,6 +566,21 @@ function nearestMachine(machines, x, y, range, layout) {
 
     emit(type, data) {
       this.events.push({ type, data });
+    }
+
+    emitNoise(x, y, kind) {
+      const killer = this.players.find(
+        (player) => player.role === 'killer' && !player.downed && !player.dead,
+      );
+      if (!killer) return;
+      const distance = dist(killer.x, killer.y, x, y);
+      if (distance > NOISE_RANGE) return;
+      this.emit('noise', {
+        x: Math.round(x),
+        y: Math.round(y),
+        kind,
+        distance: Math.round(distance),
+      });
     }
 
     completeMachine(machine, player) {
@@ -502,7 +630,7 @@ function nearestMachine(machines, x, y, range, layout) {
 
     applySkillBonus(player) {
       const machine = nearestMachine(
-        this.machines, player.x, player.y, this.config.repairRange, this.layout,
+        this.machines, player.x, player.y, this.config.repairRange, this.layout, true,
       );
       if (machine && !machine.repaired) {
         machine.progress = clamp(machine.progress + SKILL_BONUS, 0, 100);
@@ -513,11 +641,17 @@ function nearestMachine(machines, x, y, range, layout) {
 
     applySkillPenalty(player) {
       const machine = nearestMachine(
-        this.machines, player.x, player.y, this.config.repairRange, this.layout,
+        this.machines,
+        player.x,
+        player.y,
+        this.config.repairRange,
+        this.layout,
+        true,
       );
       if (machine && !machine.repaired) {
         machine.progress = clamp(machine.progress - SKILL_PENALTY, 0, 100);
       }
+      this.emitNoise(player.x, player.y, 'fail');
       player.skillCheck = null;
     }
 
@@ -567,6 +701,10 @@ function nearestMachine(machines, x, y, range, layout) {
         const victim = this.players.find(
           (other) => other.role === 'survivor' && other.hiddenIn === locker.id,
         );
+        if (victim && victim.breathMs > 0 && victim.input.sprint) {
+          this.emit('lockerEmpty', { lockerId: locker.id, muffled: true });
+          return;
+        }
         if (victim) {
           victim.hiddenIn = null;
           victim.rootUntil = this.now + LOCKER_EJECT_ROOT_MS;
@@ -579,6 +717,7 @@ function nearestMachine(machines, x, y, range, layout) {
             x: locker.x,
             y: locker.y,
           });
+          this.emitNoise(locker.x, locker.y, 'locker');
         } else {
           this.emit('lockerEmpty', { lockerId: locker.id });
         }
@@ -596,6 +735,8 @@ function nearestMachine(machines, x, y, range, layout) {
       player.propType = null;
       player.skillCheck = null;
       player.escapeProgress = 0;
+      player.breathMs = BREATH_HOLD_MAX_MS;
+      player.gasped = false;
       this.emit('locker', { id: player.id, hidden: true, lockerId: locker.id });
     }
 
@@ -616,6 +757,7 @@ function nearestMachine(machines, x, y, range, layout) {
             killer.rootUntil = this.now + FLASHLIGHT_STUN_MS;
             player.itemUsed = true;
             this.emit('flash', { id: player.id, x: killer.x, y: killer.y });
+            this.emitNoise(player.x, player.y, 'flash');
           }
         }
       } else if (player.item === 'toolbox') {
@@ -623,18 +765,21 @@ function nearestMachine(machines, x, y, range, layout) {
           this.machines,
           player.x,
           player.y,
-          this.config.repairRange + 96,
+          ITEM_USE_RANGE,
           this.layout,
+          true,
         );
         if (machine) {
           player.itemUsed = true;
           machine.progress = clamp(machine.progress + TOOLBOX_PROGRESS, 0, 100);
           if (machine.progress >= 100) this.completeMachine(machine, player);
           this.emit('itemUsed', { id: player.id, item: 'toolbox', machineId: machine.id });
+          this.emitNoise(player.x, player.y, 'toolbox');
         }
       } else if (player.item === 'medkit') {
-        if (player.health < this.config.maxHealth) {
+        if (player.health < this.config.maxHealth || player.wounded) {
           player.health = Math.min(this.config.maxHealth, player.health + MEDKIT_HEAL);
+          player.wounded = false;
           player.itemUsed = true;
           this.emit('itemUsed', { id: player.id, item: 'medkit', health: player.health });
         }
@@ -688,6 +833,7 @@ function nearestMachine(machines, x, y, range, layout) {
           if (dist(projectile.x, projectile.y, killer.x, killer.y) <= THROW_RADIUS + PLAYER_HALF) {
             killer.rootUntil = this.now + THROW_STUN_MS;
             this.emit('stun', { x: killer.x, y: killer.y, by: projectile.ownerId });
+            this.emitNoise(killer.x, killer.y, 'stun');
             return false;
           }
         }
@@ -711,6 +857,7 @@ function nearestMachine(machines, x, y, range, layout) {
         if (!trigger) continue;
         alarm.nextAt = this.now + ALARM_COOLDOWN_MS;
         this.emit('alarm', { id: alarm.id, x: alarm.x, y: alarm.y, by: trigger.id });
+        this.emitNoise(alarm.x, alarm.y, 'alarm');
       }
     }
 
@@ -770,9 +917,118 @@ function nearestMachine(machines, x, y, range, layout) {
 
       killer.finishing = false;
       killer.finishingId = null;
-      killer.finishProgress = Math.max(0, killer.finishProgress - 60 * dt);
+      killer.finishProgress = Math.max(0, killer.finishProgress - FINISH_DECAY_PER_SECOND * dt);
       if (previous) {
-        previous.finishProgress = Math.max(0, previous.finishProgress - 60 * dt);
+        previous.finishProgress = Math.max(0, previous.finishProgress - FINISH_DECAY_PER_SECOND * dt);
+      }
+    }
+
+    nearestPart(x, y, range) {
+      let best = null;
+      let bestDistance = range;
+      for (const part of this.parts) {
+        const d = dist(x, y, part.x, part.y);
+        if (d <= bestDistance) {
+          best = part;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    nearestSupply(x, y, range) {
+      let best = null;
+      let bestDistance = range;
+      for (const supply of this.scavenge) {
+        const d = dist(x, y, supply.x, supply.y);
+        if (d <= bestDistance) {
+          best = supply;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    machineForInstall(x, y, range) {
+      let best = null;
+      let bestDistance = range;
+      for (const machine of this.machines) {
+        if (machine.repaired || machine.installed) continue;
+        const d = dist(x, y, machine.x, machine.y);
+        if (d <= bestDistance) {
+          best = machine;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    dropCarriedPart(player) {
+      if (!player.carryingPart) return;
+      const part = player.carryingPart;
+      player.carryingPart = null;
+      this.parts.push({ id: part.id, x: player.x, y: player.y });
+    }
+
+    handleInteract(player) {
+      if (player.downed || player.dead || player.escaped || player.hiddenIn) return;
+      if (player.carryingPart) {
+        const machine = this.machineForInstall(
+          player.x,
+          player.y,
+          this.config.partInstallRange || PART_INSTALL_RANGE,
+        );
+        if (machine) {
+          machine.installed = true;
+          const part = player.carryingPart;
+          player.carryingPart = null;
+          this.emit('partInstalled', {
+            id: player.id,
+            partId: part.id,
+            machineId: machine.id,
+            installedCount: this.machines.filter((entry) => entry.installed).length,
+            totalMachines: this.machines.length,
+            x: machine.x,
+            y: machine.y,
+          });
+        }
+        return;
+      }
+
+      const part = this.nearestPart(
+        player.x,
+        player.y,
+        this.config.partPickupRange || PART_PICKUP_RANGE,
+      );
+      if (part) {
+        this.parts = this.parts.filter((candidate) => candidate.id !== part.id);
+        player.carryingPart = { id: part.id };
+        this.emit('partPicked', { id: player.id, partId: part.id, x: part.x, y: part.y });
+        return;
+      }
+
+      const supply = this.nearestSupply(player.x, player.y, SCAVENGE_RANGE);
+      if (supply) {
+        if (supply.type !== 'battery' && player.item && !player.itemUsed) return;
+        this.scavenge = this.scavenge.filter((candidate) => candidate.id !== supply.id);
+        if (supply.type === 'battery') {
+          player.torchBattery = Math.min(3, (player.torchBattery || 0) + 1);
+          this.emit('batteryPicked', {
+            id: player.id,
+            supplyId: supply.id,
+            x: supply.x,
+            y: supply.y,
+          });
+        } else {
+          player.item = supply.type;
+          player.itemUsed = false;
+          this.emit('supplyPicked', {
+            id: player.id,
+            type: supply.type,
+            x: supply.x,
+            y: supply.y,
+          });
+        }
       }
     }
 
@@ -786,6 +1042,7 @@ function nearestMachine(machines, x, y, range, layout) {
             100,
           );
           if (player.escapeProgress >= 100) {
+            if (player.carryingPart) this.dropCarriedPart(player);
             player.escaped = true;
             player.escapeProgress = 100;
             player.stats.escapes = 1;
@@ -795,8 +1052,18 @@ function nearestMachine(machines, x, y, range, layout) {
           }
           return;
         }
-        if (!atExit) player.escapeProgress = Math.max(0, player.escapeProgress - 30 * dt);
+        if (!atExit) {
+          player.escapeProgress = Math.max(
+            0,
+            player.escapeProgress - ESCAPE_DECAY_PER_SECOND * dt,
+          );
+        }
       }
+
+      const interactPressed = player.isHuman
+        ? this.pressed(player, 'interact')
+        : !!intent.interact;
+      if (interactPressed) this.handleInteract(player);
 
       if (!player.morphed && intent.repair && !rooted) {
         const machine = nearestMachine(
@@ -805,6 +1072,7 @@ function nearestMachine(machines, x, y, range, layout) {
           player.y,
           this.config.repairRange,
           this.layout,
+          true,
         );
         if (machine) {
           player.isRepairing = true;
@@ -840,32 +1108,36 @@ function nearestMachine(machines, x, y, range, layout) {
     power() {
       const repaired = this.machines.filter((machine) => machine.repaired).length;
       const cfg = this.config.power || {
-        speedPerMachine: 0.09,
-        visionPerMachine: 55,
-        cooldownPerMachine: 0.08,
-        minCooldownMs: 500,
+        speedPerMachine: 0.06,
+        visionPerMachine: 40,
+        cooldownPerMachine: 0.06,
+        minCooldownMs: 650,
       };
       const abilities = this.config.abilities || {};
-      const sprint = abilities.sprint || {
-        speedMultiplier: SPRINT_SPEED_MULTIPLIER,
-        durationMs: 1200,
-        cooldownMs: 6000,
-        minCooldownMs: 1500,
+      const lunge = abilities.lunge || abilities.sprint || {
+        speedMultiplier: LUNGE_SPEED_MULTIPLIER,
+        windupMs: LUNGE_WINDUP_MS,
+        durationMs: LUNGE_DURATION_MS,
+        recoveryMs: LUNGE_RECOVERY_MS,
+        recoverySpeed: LUNGE_RECOVERY_SPEED,
+        cooldownMs: 12000,
+        minCooldownMs: 6500,
       };
       const track = abilities.track || {
-        durationMs: 3000,
-        cooldownMs: 14000,
-        minCooldownMs: 4000,
+        durationMs: 3200,
+        cooldownMs: 18000,
+        minCooldownMs: 7000,
+        pingMs: TRACK_PING_MS,
       };
       const trap = abilities.trap || {
         radius: TRAP_RADIUS,
         armMs: TRAP_ARM_MS,
-        rootMs: 2200,
-        rootPerMachineMs: 250,
+        rootMs: 3000,
+        rootPerMachineMs: 300,
         lifetimeMs: TRAP_LIFETIME_MS,
-        cooldownMs: 3000,
-        minCooldownMs: 800,
-        max: 4,
+        cooldownMs: 6500,
+        minCooldownMs: 2500,
+        max: 3,
       };
       const speedMultiplier = 1 + cfg.speedPerMachine * repaired;
       const scale = (base, min) =>
@@ -879,12 +1151,18 @@ function nearestMachine(machines, x, y, range, layout) {
           cfg.minCooldownMs,
           Math.round(this.config.attackCooldownMs * (1 - cfg.cooldownPerMachine * repaired)),
         ),
-        sprintSpeedMultiplier: sprint.speedMultiplier,
-        sprintDurationMs: sprint.durationMs,
-        sprintCooldownMs: scale(sprint.cooldownMs, sprint.minCooldownMs),
+        lungeSpeedMultiplier: lunge.speedMultiplier,
+        lungeWindupMs: lunge.windupMs,
+        lungeDurationMs: lunge.durationMs,
+        lungeRecoveryMs: lunge.recoveryMs,
+        lungeRecoverySpeed: lunge.recoverySpeed,
+        lungeCooldownMs: scale(lunge.cooldownMs, lunge.minCooldownMs),
         trackDurationMs: track.durationMs,
         trackCooldownMs: scale(track.cooldownMs, track.minCooldownMs),
-        maxTraps: Math.min(trap.max, 1 + repaired),
+        trackPingMs: track.pingMs || TRACK_PING_MS,
+        maxTraps: Math.min(trap.max, 2 + repaired),
+        trapArmMs: trap.armMs || TRAP_ARM_MS,
+        trapLifetimeMs: trap.lifetimeMs || TRAP_LIFETIME_MS,
         trapRootMs: trap.rootMs + (trap.rootPerMachineMs || 0) * repaired,
         trapCooldownMs: scale(trap.cooldownMs, trap.minCooldownMs),
       };
@@ -911,6 +1189,7 @@ function nearestMachine(machines, x, y, range, layout) {
       const killer = this.getPlayer(id);
       if (!killer || killer.role !== 'killer' || killer.downed) return;
       if (killer.rootUntil > this.now) return;
+      if (killer.lungeWindupUntil > this.now || killer.lungeRecoverUntil > this.now) return;
       if (this.now - killer.lastAttackAt < this.power().attackCooldownMs) return;
       killer.lastAttackAt = this.now;
 
@@ -930,12 +1209,16 @@ function nearestMachine(machines, x, y, range, layout) {
         if (player.health <= 0) {
           player.downed = true;
           player.dead = false;
-          player.bleedOutAt = this.now + BLEEDOUT_SECONDS * 1000;
+          player.wounded = false;
+          player.bleedOutAt = this.now + (this.config.bleedoutSeconds || BLEEDOUT_SECONDS) * 1000;
           player.morphed = false;
           player.propType = null;
           player.isRepairing = false;
           player.skillCheck = null;
           player.hiddenIn = null;
+          this.dropCarriedPart(player);
+        } else if (player.health <= (this.config.woundedHealth || 50)) {
+          player.wounded = true;
         }
         victims.push(player.id);
       }
@@ -964,7 +1247,9 @@ function nearestMachine(machines, x, y, range, layout) {
           hitDistance = distance;
         }
       }
-      if (hitMachine) hitMachine.progress = clamp(hitMachine.progress - 30, 0, 100);
+      if (hitMachine) {
+        hitMachine.progress = clamp(hitMachine.progress - MACHINE_REGRESS, 0, 100);
+      }
 
       this.events.push({
         type: 'attack',
@@ -1003,6 +1288,7 @@ function nearestMachine(machines, x, y, range, layout) {
           throw: input.throw,
           locker: input.locker,
           useItem: input.useItem,
+          interact: input.interact,
           attack: false,
           angle: null,
         };
@@ -1258,6 +1544,38 @@ function nearestMachine(machines, x, y, range, layout) {
         };
       }
 
+      const uninstalled = this.machines.filter((m) => !m.repaired && !m.installed);
+      const installRange = (config.partInstallRange || PART_INSTALL_RANGE) * 0.85;
+      if (player.carryingPart) {
+        const target = uninstalled
+          .map((m) => ({ m, d: dist(player.x, player.y, m.x, m.y) }))
+          .sort((a, b) => a.d - b.d)[0];
+        if (target) {
+          const angle = Math.atan2(target.m.y - player.y, target.m.x - player.x);
+          const inRange = target.d <= installRange;
+          return {
+            moveX: inRange ? 0 : Math.cos(angle),
+            moveY: inRange ? 0 : Math.sin(angle),
+            repair: false, revive: false, sprint: false, track: false, trap: false,
+            finish: false, throw: false, locker: false, useItem: false,
+            interact: inRange, attack: false, angle,
+          };
+        }
+      } else if (this.parts.length > 0) {
+        const target = this.parts
+          .map((p) => ({ p, d: dist(player.x, player.y, p.x, p.y) }))
+          .sort((a, b) => a.d - b.d)[0];
+        const angle = Math.atan2(target.p.y - player.y, target.p.x - player.x);
+        const inRange = target.d <= PART_PICKUP_RANGE * 0.85;
+        return {
+          moveX: inRange ? 0 : Math.cos(angle),
+          moveY: inRange ? 0 : Math.sin(angle),
+          repair: false, revive: false, sprint: false, track: false, trap: false,
+          finish: false, throw: false, locker: false, useItem: false,
+          interact: inRange, attack: false, angle,
+        };
+      }
+
       if (player.botRepairUntil > this.now) {
         return {
           moveX: 0, moveY: 0, repair: true, revive: false,
@@ -1268,7 +1586,7 @@ function nearestMachine(machines, x, y, range, layout) {
       }
 
       const near = nearestMachine(
-        this.machines, player.x, player.y, config.repairRange * 0.9, this.layout,
+        this.machines, player.x, player.y, config.repairRange * 0.9, this.layout, true,
       );
       if (near) {
         player.botRepairUntil = this.now + 1800 + Math.random() * 2600;
@@ -1301,7 +1619,8 @@ function nearestMachine(machines, x, y, range, layout) {
         return;
       }
 
-      const rooted = player.rootUntil > this.now;
+      const lungeWindup = player.role === 'killer' && player.lungeWindupUntil > this.now;
+      const rooted = player.rootUntil > this.now || lungeWindup;
       let moveX = rooted ? 0 : intent.moveX;
       let moveY = rooted ? 0 : intent.moveY;
       const moving = moveX !== 0 || moveY !== 0;
@@ -1311,17 +1630,28 @@ function nearestMachine(machines, x, y, range, layout) {
         moveX /= length;
         moveY /= length;
         player.angle = intent.angle != null ? intent.angle : Math.atan2(moveY, moveX);
+        const power = this.power();
         const base =
-          player.role === 'killer' ? this.power().killerSpeed : this.config.survivorSpeed;
+          player.role === 'killer' ? power.killerSpeed : this.config.survivorSpeed;
         let speed = base * (player.morphed ? this.config.morphSpeedMultiplier : 1);
+        if (player.role === 'survivor') {
+          if (player.wounded) speed *= this.config.woundedSpeedMultiplier;
+          if (player.carryingPart) speed *= 0.92;
+        }
         if (player.role === 'killer' && this.now < player.sprintUntil) {
-          speed *= this.power().sprintSpeedMultiplier || SPRINT_SPEED_MULTIPLIER;
+          speed *= power.lungeSpeedMultiplier;
+        } else if (player.role === 'killer' && player.lungeRecoverUntil > this.now) {
+          speed *= power.lungeRecoverySpeed;
         }
         const oldX = player.x;
         const oldY = player.y;
-        moveEntity(this.layout, player, moveX * speed * dt, moveY * speed * dt);
-        player.stillMs = distSq(oldX, oldY, player.x, player.y) > 0.01 ? 0 : player.stillMs + dt * 1000;
-      } else {
+          moveEntity(this.layout, player, moveX * speed * dt, moveY * speed * dt);
+          player.stillMs = distSq(oldX, oldY, player.x, player.y) > 0.01 ? 0 : player.stillMs + dt * 1000;
+          if (player.role === 'survivor' && this.now >= player.nextNoiseAt) {
+            player.nextNoiseAt = this.now + (player.wounded ? 680 : NOISE_STEP_MS);
+            this.emitNoise(player.x, player.y, player.wounded ? 'woundedStep' : 'step');
+          }
+        } else {
         if (intent.angle != null) player.angle = intent.angle;
         player.stillMs += dt * 1000;
       }
@@ -1335,21 +1665,39 @@ function nearestMachine(machines, x, y, range, layout) {
     handleAbilities(player, intent) {
       const power = this.power();
       const now = this.now;
-      if (player.rootUntil > now) return;
+      if (
+        player.rootUntil > now ||
+        player.lungeWindupUntil > now ||
+        player.lungeRecoverUntil > now
+      ) {
+        return;
+      }
 
       const sprint = player.isHuman ? this.pressed(player, 'sprint') : !!intent.sprint;
       const track = player.isHuman ? this.pressed(player, 'track') : !!intent.track;
       const trap = player.isHuman ? this.pressed(player, 'trap') : !!intent.trap;
 
       if (sprint && now >= player.nextSprintAt) {
-        player.nextSprintAt = now + power.sprintCooldownMs;
-        player.sprintUntil = now + power.sprintDurationMs;
-        this.events.push({ type: 'ability', data: { id: player.id, ability: 'sprint' } });
+        player.nextSprintAt = now + power.lungeCooldownMs;
+        player.lungeStarted = false;
+        player.lungeWindupUntil = now + power.lungeWindupMs;
+        player.sprintUntil = 0;
+        this.events.push({
+          type: 'ability',
+          data: {
+            id: player.id,
+            ability: 'lunge',
+            phase: 'windup',
+            windupMs: power.lungeWindupMs,
+            durationMs: power.lungeDurationMs,
+          },
+        });
       }
 
       if (track && now >= player.nextTrackAt) {
         player.nextTrackAt = now + power.trackCooldownMs;
         player.trackUntil = now + power.trackDurationMs;
+        player.nextTrackPingAt = now;
         this.events.push({ type: 'ability', data: { id: player.id, ability: 'track' } });
       }
 
@@ -1360,8 +1708,8 @@ function nearestMachine(machines, x, y, range, layout) {
           id: `trap-${this.trapSeq}`,
           x: player.x,
           y: player.y,
-          armedAt: now + TRAP_ARM_MS,
-          expiresAt: now + TRAP_LIFETIME_MS,
+          armedAt: now + power.trapArmMs,
+          expiresAt: now + power.trapLifetimeMs,
         };
         this.traps.push(trap);
         this.events.push({
@@ -1405,6 +1753,177 @@ function nearestMachine(machines, x, y, range, layout) {
       });
     }
 
+    updateLunge() {
+      const killer = this.players.find(
+        (player) => player.role === 'killer' && !player.downed && !player.dead,
+      );
+      if (!killer) return;
+      const power = this.power();
+      if (
+        killer.lungeWindupUntil > 0 &&
+        this.now >= killer.lungeWindupUntil
+      ) {
+        killer.lungeWindupUntil = -9999;
+        killer.lungeStarted = true;
+        killer.sprintUntil = this.now + power.lungeDurationMs;
+        this.emit('ability', {
+          id: killer.id,
+          ability: 'lunge',
+          phase: 'burst',
+          durationMs: power.lungeDurationMs,
+        });
+      }
+      if (killer.sprintUntil > 0 && this.now >= killer.sprintUntil) {
+        killer.sprintUntil = -9999;
+        killer.lungeRecoverUntil = this.now + power.lungeRecoveryMs;
+        this.emit('ability', {
+          id: killer.id,
+          ability: 'lunge',
+          phase: 'recover',
+          recoveryMs: power.lungeRecoveryMs,
+        });
+      }
+    }
+
+    updateTrackPings() {
+      const killer = this.players.find(
+        (player) => player.role === 'killer' && !player.downed && !player.dead,
+      );
+      if (!killer || killer.trackUntil <= this.now) return;
+      if (killer.id !== this.humanId) return;
+      if (this.now < killer.nextTrackPingAt) return;
+      killer.nextTrackPingAt = this.now + (this.power().trackPingMs || TRACK_PING_MS);
+      const width = this.layout[0].length * TILE;
+      const height = this.layout.length * TILE;
+      for (const survivor of this.players) {
+        if (
+          survivor.role !== 'survivor' ||
+          survivor.downed ||
+          survivor.dead ||
+          survivor.escaped ||
+          survivor.hiddenIn
+        ) {
+          continue;
+        }
+        const distance = dist(killer.x, killer.y, survivor.x, survivor.y);
+        const angle =
+          Math.atan2(survivor.y - killer.y, survivor.x - killer.x) +
+          (Math.random() * 2 - 1) * TRACK_JITTER_ANGLE;
+        const roughDistance =
+          distance * (1 + (Math.random() * 2 - 1) * TRACK_JITTER_DISTANCE);
+        this.events.push({
+          type: 'trackPing',
+          data: {
+            x: Math.round(clamp(killer.x + Math.cos(angle) * roughDistance, 0, width)),
+            y: Math.round(clamp(killer.y + Math.sin(angle) * roughDistance, 0, height)),
+          },
+        });
+      }
+    }
+
+    updateWoundedEffects() {
+      for (const player of this.players) {
+        if (
+          player.role !== 'survivor' ||
+          !player.wounded ||
+          player.downed ||
+          player.dead ||
+          player.escaped ||
+          player.hiddenIn
+        ) {
+          continue;
+        }
+        const moving =
+          player.input.up || player.input.down || player.input.left || player.input.right;
+        if (moving && this.now >= player.nextBloodAt) {
+          player.nextBloodAt = this.now + 1100;
+          this.events.push({
+            type: 'bloodTrail',
+            data: { id: player.id, x: Math.round(player.x), y: Math.round(player.y) },
+          });
+        }
+        if (this.now >= player.nextWoundedBreathAt) {
+          player.nextWoundedBreathAt = this.now + 2300;
+          this.emitNoise(player.x, player.y, 'breath');
+        }
+      }
+    }
+
+    updateTerror() {
+      const killer = this.players.find(
+        (player) => player.role === 'killer' && !player.downed && !player.dead,
+      );
+      if (!killer) return;
+      if (this.now < this.nextHeartbeatAt) return;
+      this.nextHeartbeatAt = this.now + 850;
+      for (const survivor of this.players) {
+        if (
+          survivor.role !== 'survivor' ||
+          survivor.downed ||
+          survivor.dead ||
+          survivor.escaped
+        ) {
+          continue;
+        }
+        const distance = dist(killer.x, killer.y, survivor.x, survivor.y);
+        if (distance > 560) continue;
+        this.events.push({
+          type: 'heartbeat',
+          data: {
+            id: survivor.id,
+            intensity: Math.round(clamp(1 - distance / 560, 0.05, 1) * 100) / 100,
+            hidden: !!survivor.hiddenIn,
+          },
+        });
+      }
+    }
+
+    updateAtmosphere() {
+      if (!this.blackoutActive && this.now >= this.nextBlackoutAt) {
+        this.blackoutActive = true;
+        this.blackoutUntil = this.now + BLACKOUT_DURATION_MS;
+        this.nextBlackoutAt =
+          this.blackoutUntil +
+          BLACKOUT_MIN_DELAY_MS +
+          Math.random() * (BLACKOUT_MAX_DELAY_MS - BLACKOUT_MIN_DELAY_MS);
+        this.events.push({
+          type: 'blackout',
+          data: { active: true, durationMs: BLACKOUT_DURATION_MS },
+        });
+      } else if (this.blackoutActive && this.now >= this.blackoutUntil) {
+        this.blackoutActive = false;
+        this.events.push({ type: 'blackout', data: { active: false } });
+      }
+
+      if (!this.fogBurst && this.now >= this.nextFogBurstAt) {
+        const point = this.randomFloorPoint();
+        this.fogBurst = {
+          x: point.x,
+          y: point.y,
+          radius: FOG_BURST_RADIUS,
+          until: this.now + FOG_BURST_DURATION_MS,
+        };
+        this.nextFogBurstAt =
+          this.now +
+          FOG_BURST_DURATION_MS +
+          FOG_BURST_MIN_DELAY_MS +
+          Math.random() * (FOG_BURST_MAX_DELAY_MS - FOG_BURST_MIN_DELAY_MS);
+        this.events.push({
+          type: 'fogBurst',
+          data: {
+            active: true,
+            x: this.fogBurst.x,
+            y: this.fogBurst.y,
+            radius: this.fogBurst.radius,
+            durationMs: FOG_BURST_DURATION_MS,
+          },
+        });
+      } else if (this.fogBurst && this.now >= this.fogBurst.until) {
+        this.fogBurst = null;
+        this.events.push({ type: 'fogBurst', data: { active: false } });
+      }
+    }
+
     step(dt) {
       if (this.finished) return;
       this.now += dt * 1000;
@@ -1413,6 +1932,11 @@ function nearestMachine(machines, x, y, range, layout) {
       this.updateHazards();
       this.updateTraps();
       this.updateProjectiles(dt);
+      this.updateAtmosphere();
+      this.updateLunge();
+      this.updateTrackPings();
+      this.updateWoundedEffects();
+      this.updateTerror();
 
       for (const player of this.players) player.wantFinish = false;
 
@@ -1434,6 +1958,24 @@ function nearestMachine(machines, x, y, range, layout) {
           player.reviving = false;
           if (player.isHuman && this.pressed(player, 'locker')) {
             this.toggleLocker(player);
+            continue;
+          }
+          if (player.role === 'survivor') {
+            const holding = !!player.input.sprint && player.breathMs > 0;
+            if (holding) {
+              player.breathMs = Math.max(0, player.breathMs - dt * 1000);
+              if (player.breathMs <= 0 && !player.gasped) {
+                player.gasped = true;
+                this.emit('gasp', { id: player.id, x: player.x, y: player.y });
+                this.emitNoise(player.x, player.y, 'gasp');
+              }
+            } else {
+              player.breathMs = Math.min(
+                BREATH_HOLD_MAX_MS,
+                player.breathMs + dt * BREATH_RECOVER_PER_SECOND,
+              );
+              if (player.breathMs > BREATH_HOLD_MAX_MS * 0.4) player.gasped = false;
+            }
           }
           continue;
         }
@@ -1461,7 +2003,7 @@ function nearestMachine(machines, x, y, range, layout) {
     // downed teammate brings them back over REVIVE_SECONDS.
     processRevives(intents, dt) {
       const reviveRange = this.config.reviveRange || 64;
-      const reviveSeconds = this.config.reviveSeconds || 4;
+      const reviveSeconds = this.config.reviveSeconds || 7.5;
 
       for (const player of this.players) {
         if (player.downed) player.reviveCount = 0;
@@ -1508,21 +2050,24 @@ function nearestMachine(machines, x, y, range, layout) {
             if (helper) helper.stats.revived += 1;
 
             victim.downed = false;
-            victim.health = this.config.reviveHealth || 50;
+            victim.wounded = false;
+            victim.health = this.config.reviveHealth || 60;
             victim.reviveProgress = 0;
             victim.bleedOutAt = 0;
             victim.finishProgress = 0;
             victim.stillMs = 0;
+            victim.breathMs = BREATH_HOLD_MAX_MS;
             victim.input = {
               up: false, down: false, left: false, right: false,
               repair: false, revive: false, sprint: false, track: false,
-              trap: false, finish: false, throw: false, locker: false, useItem: false,
+              trap: false, finish: false, throw: false, locker: false,
+              useItem: false, interact: false,
             };
             this.events.push({ type: 'revived', data: { id: victim.id } });
           }
         } else {
           victim.reviveProgress = clamp(
-            (victim.reviveProgress || 0) - 45 * dt,
+            (victim.reviveProgress || 0) - REVIVE_DECAY_PER_SECOND * dt,
             0,
             100,
           );
@@ -1583,7 +2128,6 @@ function nearestMachine(machines, x, y, range, layout) {
       if (recipient.role === 'killer' && inFog) {
         power.visionRange = Math.round(power.visionRange * FOG_VISION_MULTIPLIER);
       }
-      const tracking = recipient.role === 'killer' && recipient.trackUntil > now;
       const visible = [];
       for (const player of this.players) {
         if (player.hiddenIn && player.id !== recipient.id) continue;
@@ -1591,7 +2135,6 @@ function nearestMachine(machines, x, y, range, layout) {
           recipient.role === 'killer' && player.id !== recipient.id && player.role === 'survivor';
         if (
           isOtherSurvivor &&
-          !tracking &&
           !killerCanSee(this.layout, this.config, recipient, player, power.visionRange)
         ) {
           continue;
@@ -1600,11 +2143,21 @@ function nearestMachine(machines, x, y, range, layout) {
       }
 
       const survivors = this.players.filter((player) => player.role === 'survivor');
+      const elapsedMs = this.now;
+      const phase = elapsedMs < 90000
+        ? { act: 1, phase: 'explore', elapsedMs }
+        : elapsedMs < 240000
+          ? { act: 2, phase: 'hunt', elapsedMs }
+          : elapsedMs < 420000
+            ? { act: 3, phase: 'escalation', elapsedMs }
+            : { act: 4, phase: 'finale', elapsedMs };
       const killerAbilities =
         recipient.role === 'killer'
           ? {
               sprintUntil: recipient.sprintUntil,
               sprintReadyAt: recipient.nextSprintAt,
+              lungeWindupUntil: recipient.lungeWindupUntil,
+              lungeRecoverUntil: recipient.lungeRecoverUntil,
               trackUntil: recipient.trackUntil,
               trackReadyAt: recipient.nextTrackAt,
               trapReadyAt: recipient.nextTrapAt,
@@ -1625,8 +2178,24 @@ function nearestMachine(machines, x, y, range, layout) {
         myRole: recipient.role,
         players: visible,
         machines: this.machines.map(serializeMachine),
+        installedCount: this.machines.filter((machine) => machine.installed).length,
         repairedCount: this.machines.filter((machine) => machine.repaired).length,
         totalMachines: this.machines.length,
+        parts: this.parts.map(serializePart),
+        supplies: this.scavenge.map(serializeSupply),
+        atmosphere: {
+          blackout: this.blackoutActive,
+          blackoutUntil: this.blackoutUntil,
+          fogBurst: this.fogBurst
+            ? {
+                x: this.fogBurst.x,
+                y: this.fogBurst.y,
+                radius: this.fogBurst.radius,
+                until: this.fogBurst.until,
+              }
+            : null,
+        },
+        phase,
         survivorsAlive: survivors.filter(
           (player) => !player.downed && !player.dead && !player.escaped,
         ).length,
@@ -1684,8 +2253,12 @@ function nearestMachine(machines, x, y, range, layout) {
 
       this.playerViews = new Map();
       this.machineViews = new Map();
+      this.partViews = new Map();
+      this.supplyViews = new Map();
       this.trapViews = new Map();
       this.lastState = null;
+      this.lastHeartbeatAt = -9999;
+      this.fogCloud = null;
 
       this.createGlobalTextures();
       this.createInput();
@@ -1744,7 +2317,8 @@ function nearestMachine(machines, x, y, range, layout) {
         down: Phaser.Input.Keyboard.KeyCodes.S,
         left: Phaser.Input.Keyboard.KeyCodes.A,
         right: Phaser.Input.Keyboard.KeyCodes.D,
-        morph: Phaser.Input.Keyboard.KeyCodes.E,
+        morph: Phaser.Input.Keyboard.KeyCodes.M,
+        interact: Phaser.Input.Keyboard.KeyCodes.E,
         repair: Phaser.Input.Keyboard.KeyCodes.F,
         revive: Phaser.Input.Keyboard.KeyCodes.R,
         attack: Phaser.Input.Keyboard.KeyCodes.SPACE,
@@ -1763,6 +2337,7 @@ function nearestMachine(machines, x, y, range, layout) {
         Phaser.Input.Keyboard.KeyCodes.S,
         Phaser.Input.Keyboard.KeyCodes.D,
         Phaser.Input.Keyboard.KeyCodes.E,
+        Phaser.Input.Keyboard.KeyCodes.M,
         Phaser.Input.Keyboard.KeyCodes.F,
         Phaser.Input.Keyboard.KeyCodes.R,
         Phaser.Input.Keyboard.KeyCodes.SPACE,
@@ -1924,6 +2499,35 @@ function nearestMachine(machines, x, y, range, layout) {
       }
     }
 
+    createPickupTextures() {
+      this.canvasTexture('pickup:fuse', 28, 28, (ctx) => {
+        ctx.fillStyle = '#c99b3f';
+        ctx.fillRect(7, 4, 14, 20);
+        ctx.fillStyle = '#f4d27a';
+        ctx.fillRect(9, 6, 5, 16);
+        ctx.fillStyle = '#6a4a16';
+        ctx.fillRect(5, 2, 4, 6);
+        ctx.fillRect(19, 20, 4, 6);
+      });
+      const supply = (key, color, glyph) => {
+        this.canvasTexture(`pickup:${key}`, 26, 26, (ctx) => {
+          ctx.fillStyle = '#101722';
+          ctx.fillRect(2, 2, 22, 22);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(3, 3, 20, 20);
+          ctx.fillStyle = color;
+          ctx.font = 'bold 15px Trebuchet MS';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(glyph, 13, 14);
+        });
+      };
+      supply('medkit', '#ff6b81', '+');
+      supply('toolbox', '#6aa9ff', 'T');
+      supply('battery', '#ffd45e', 'B');
+    }
+
     createObjectiveViews() {
       const exitTile = this.mapDef.exitTile || [13, 13];
       this.exitCenter = tileCenter(exitTile[0], exitTile[1]);
@@ -2018,6 +2622,7 @@ function nearestMachine(machines, x, y, range, layout) {
       this.spawnAmbientProps();
       this.createMachineViews();
       this.createObjectiveViews();
+      this.createPickupTextures();
     }
 
     spawnAmbientProps() {
@@ -2082,7 +2687,8 @@ function nearestMachine(machines, x, y, range, layout) {
           .setVisible(false);
 
         this.machineViews.set(machine.id, {
-          glow, sprite, barBg, bar, label, progress: 0, repaired: false,
+          glow, sprite, barBg, bar, label, progress: 0,
+          repaired: false, installed: !!machine.installed,
         });
       }
     }
@@ -2196,6 +2802,7 @@ function nearestMachine(machines, x, y, range, layout) {
       }
 
       this.updateMachineViews(state.machines);
+      this.updatePickupViews(state.parts, state.supplies);
       this.updateTrapViews(state);
       if (state.exit) this.updateExitView(state.exit);
       this.updateHud(state);
@@ -2358,6 +2965,8 @@ function nearestMachine(machines, x, y, range, layout) {
       this.updateLocalMarker();
       this.updateTorch(delta);
       this.updateDarkness();
+      this.updateHorrorOverlay();
+      this.updateAmbientHorror(delta);
 
       this.hudAccumulator += delta;
       if (this.hudAccumulator >= 100) {
@@ -2384,7 +2993,11 @@ function nearestMachine(machines, x, y, range, layout) {
         !blocked && active && !hidden && isSurvivor && this.keys.revive.isDown;
       const finish =
         !blocked && active && !hidden && isKiller && this.keys.repair.isDown;
-      const sprint = !blocked && active && !hidden && isKiller && this.keys.sprint.isDown;
+      const sprint =
+        !blocked &&
+        active &&
+        ((isKiller && !hidden) || (isSurvivor && hidden)) &&
+        this.keys.sprint.isDown;
       const track = !blocked && active && !hidden && isKiller && this.keys.pulse.isDown;
       const trap = !blocked && active && !hidden && isKiller && this.keys.trap.isDown;
       const throwProp =
@@ -2392,9 +3005,11 @@ function nearestMachine(machines, x, y, range, layout) {
       const locker = !blocked && active && this.keys.locker.isDown;
       const useItem =
         !blocked && active && !hidden && isSurvivor && this.keys.useItem.isDown;
+      const interact =
+        !blocked && active && !hidden && isSurvivor && this.keys.interact.isDown;
       return {
         up, down, left, right, repair, revive, sprint, track, trap,
-        finish, throw: throwProp, locker, useItem,
+        finish, throw: throwProp, locker, useItem, interact,
       };
     }
 
@@ -2406,7 +3021,14 @@ function nearestMachine(machines, x, y, range, layout) {
       if (!this.localSprite || !this.localSprite.body || !this.me) return;
       const input = this.collectInput();
 
-      if (this.me.downed || this.me.dead || this.me.escaped || this.me.hidden || this.me.rooted) {
+      if (
+        this.me.downed ||
+        this.me.dead ||
+        this.me.escaped ||
+        this.me.hidden ||
+        this.me.rooted ||
+        this.me.lungeWindup
+      ) {
         this.localSprite.body.setVelocity(0, 0);
       } else {
         const x = (input.right ? 1 : 0) - (input.left ? 1 : 0);
@@ -2418,10 +3040,16 @@ function nearestMachine(machines, x, y, range, layout) {
           const killerSpeed = (this.power && this.power.killerSpeed) || this.cfg.killerSpeed;
           const baseSpeed = this.me.role === 'killer' ? killerSpeed : this.cfg.survivorSpeed;
           let speed = baseSpeed * (this.me.morphed ? this.cfg.morphSpeedMultiplier : 1);
-          // Predict from the server-confirmed sprint, not the raw key, so the
-          // local sprite does not rubber-band when a lunge ends.
+          if (this.me.role === 'survivor') {
+            if (this.me.wounded) speed *= this.cfg.woundedSpeedMultiplier || WOUNDED_SPEED_MULTIPLIER;
+            if (this.me.carryingPart) speed *= 0.92;
+          }
+          // Predict from the server-confirmed lunge phase, not the raw key, so
+          // the local sprite does not rubber-band when a lunge ends.
           if (this.me.role === 'killer' && this.me.sprinting) {
-            speed *= (this.power && this.power.sprintSpeedMultiplier) || SPRINT_SPEED_MULTIPLIER;
+            speed *= (this.power && this.power.lungeSpeedMultiplier) || LUNGE_SPEED_MULTIPLIER;
+          } else if (this.me.role === 'killer' && this.me.lungeRecovering) {
+            speed *= (this.power && this.power.lungeRecoverySpeed) || LUNGE_RECOVERY_SPEED;
           }
           this.localAngle = Math.atan2(y, x);
           this.localSprite.body.setVelocity((x / length) * speed, (y / length) * speed);
@@ -2498,7 +3126,9 @@ function nearestMachine(machines, x, y, range, layout) {
         this.me.role === 'killer' &&
         !this.me.downed &&
         !this.me.dead &&
-        !this.me.rooted
+        !this.me.rooted &&
+        !this.me.lungeWindup &&
+        !this.me.lungeRecovering
       ) {
         if (time >= this.nextAttackAt) {
           this.nextAttackAt = time + this.attackCooldownMs();
@@ -2825,18 +3455,70 @@ function nearestMachine(machines, x, y, range, layout) {
         return;
       }
 
+      const atmosphere = this.lastState && this.lastState.atmosphere;
+      const blackout = !!(atmosphere && atmosphere.blackout);
+
       if (this.myRole === 'killer') {
-        this.darkness.fill(0x02030a, KILLER_DARKNESS);
+        this.darkness.fill(0x02030a, KILLER_DARKNESS + (blackout ? 0.08 : 0));
         this.beginLights();
         this.drawKillerLight();
         this.endLights();
         return;
       }
 
-      this.darkness.fill(0x02030a, SURVIVOR_DARKNESS);
+      this.darkness.fill(0x02030a, SURVIVOR_DARKNESS + (blackout ? 0.1 : 0));
       this.beginLights();
       this.drawSurvivorLight();
       this.endLights();
+    }
+
+    updateAmbientHorror(delta) {
+      if (!this.me || !this.localSprite || !PN.Audio) return;
+      if (this.me.dead || this.me.escaped) return;
+      this.ambientAccumulator = (this.ambientAccumulator || 0) + delta;
+      if (this.ambientAccumulator < 4200) return;
+      this.ambientAccumulator = 0;
+
+      let nearest = null;
+      let nearestDistance = Infinity;
+      for (const view of this.machineViews.values()) {
+        const d = dist(this.localSprite.x, this.localSprite.y, view.sprite.x, view.sprite.y);
+        if (d < nearestDistance) {
+          nearest = view;
+          nearestDistance = d;
+        }
+      }
+
+      if (nearest && nearestDistance < 190) {
+        const pan = clamp((nearest.sprite.x - this.localSprite.x) / 220, -1, 1);
+        PN.Audio.spatial('hum', pan);
+      } else if (this.me.hidden || Math.random() < 0.36) {
+        const pan = Math.random() * 1.6 - 0.8;
+        PN.Audio.spatial('creak', pan);
+      } else if (this.me.wounded) {
+        PN.Audio.play('breath');
+      }
+    }
+
+    updateHorrorOverlay() {
+      const vignette = document.getElementById('heartbeatVignette');
+      if (vignette && this.time.now - this.lastHeartbeatAt > 1300) {
+        vignette.style.opacity = '0';
+      }
+
+      const atmosphere = this.lastState && this.lastState.atmosphere;
+      const burst = atmosphere && (atmosphere.fogBurst || atmosphere.fog);
+      if (burst) {
+        if (!this.fogCloud) {
+          this.fogCloud = this.add.circle(0, 0, 10, 0x9fb4c9, 0.26).setDepth(17);
+        }
+        this.fogCloud
+          .setPosition(burst.x, burst.y)
+          .setRadius(burst.radius)
+          .setVisible(true);
+      } else if (this.fogCloud) {
+        this.fogCloud.setVisible(false);
+      }
     }
 
     drawSurvivorLight() {
@@ -2915,7 +3597,7 @@ function nearestMachine(machines, x, y, range, layout) {
       if (tipEl) {
         tipEl.textContent = isKiller
           ? 'Hunt them down. SHIFT to lunge, Q to pulse, C to arm a trap.'
-          : 'Repair the propmachines. Your torch drains — press L to save battery.';
+          : 'Find fuses, install them, then repair the propmachines. Your torch drains — press L to save battery.';
       }
 
       el.classList.remove('show', 'killer', 'survivor');
@@ -2925,6 +3607,41 @@ function nearestMachine(machines, x, y, range, layout) {
       if (PN.Audio) PN.Audio.play('start');
       if (this.introTimer) clearTimeout(this.introTimer);
       this.introTimer = setTimeout(() => el.classList.remove('show'), 3400);
+    }
+
+    // ------------------------------------------------------- Pickups
+    updatePickupViews(parts, supplies) {
+      const seenParts = new Set();
+      for (const part of parts || []) {
+        seenParts.add(part.id);
+        let view = this.partViews.get(part.id);
+        if (!view) {
+          view = this.add.image(part.x, part.y, 'pickup:fuse').setDepth(5);
+          this.partViews.set(part.id, view);
+        }
+        view.setPosition(part.x, part.y);
+      }
+      for (const [id, view] of this.partViews) {
+        if (seenParts.has(id)) continue;
+        view.destroy();
+        this.partViews.delete(id);
+      }
+
+      const seenSupplies = new Set();
+      for (const supply of supplies || []) {
+        seenSupplies.add(supply.id);
+        let view = this.supplyViews.get(supply.id);
+        if (!view) {
+          view = this.add.image(supply.x, supply.y, `pickup:${supply.type}`).setDepth(5);
+          this.supplyViews.set(supply.id, view);
+        }
+        view.setPosition(supply.x, supply.y);
+      }
+      for (const [id, view] of this.supplyViews) {
+        if (seenSupplies.has(id)) continue;
+        view.destroy();
+        this.supplyViews.delete(id);
+      }
     }
 
     // ------------------------------------------------------- Machines
@@ -2937,6 +3654,8 @@ function nearestMachine(machines, x, y, range, layout) {
         const justRepaired = !view.repaired && machine.repaired;
         view.progress = machine.progress;
         view.repaired = machine.repaired;
+        view.installed = !!machine.installed;
+        view.sprite.setAlpha(machine.installed || machine.repaired ? 1 : 0.62);
 
         if (justRepaired) {
           view.sprite.setTexture(this.ensureMachineTexture(true));
@@ -2949,16 +3668,25 @@ function nearestMachine(machines, x, y, range, layout) {
           this.localSprite &&
           this.myRole === 'survivor' &&
           dist(this.localSprite.x, this.localSprite.y, machine.x, machine.y) <= this.cfg.repairRange + 16;
-        const showBar = machine.progress > 0 || machine.repaired || near;
+        const showBar = machine.installed || machine.repaired;
+        const showLabel = showBar || near;
         view.barBg.setVisible(showBar);
         view.bar.setVisible(showBar);
-        view.label.setVisible(showBar);
+        view.label.setVisible(showLabel);
 
         const ratio = clamp(machine.progress / 100, 0, 1);
         view.bar.displayWidth = 48 * ratio;
         view.bar.setFillStyle(machine.repaired ? 0x54a9ff : 0x5de78e, 1);
-        view.label.setText(machine.repaired ? 'ONLINE' : `${Math.floor(machine.progress)}%`);
-        view.label.setColor(machine.repaired ? '#9ad8ff' : '#bfe5ff');
+        view.label.setText(
+          machine.repaired
+            ? 'ONLINE'
+            : !machine.installed
+              ? 'NO FUSE'
+              : `${Math.floor(machine.progress)}%`,
+        );
+        view.label.setColor(
+          machine.repaired ? '#9ad8ff' : machine.installed ? '#bfe5ff' : '#ffd27a',
+        );
       }
     }
 
@@ -2968,10 +3696,10 @@ function nearestMachine(machines, x, y, range, layout) {
         const near =
           this.myRole === 'survivor' &&
           dist(this.localSprite.x, this.localSprite.y, view.sprite.x, view.sprite.y) <= this.cfg.repairRange + 16;
-        const showBar = view.progress > 0 || view.repaired || near;
+        const showBar = view.installed || view.repaired;
         view.barBg.setVisible(showBar);
         view.bar.setVisible(showBar);
-        view.label.setVisible(showBar);
+        view.label.setVisible(showBar || near);
         if (view.repaired) {
           view.glow.setAlpha(0.16 + Math.sin(this.time.now / 380) * 0.06);
         } else {
@@ -3071,12 +3799,41 @@ function nearestMachine(machines, x, y, range, layout) {
 
       if (type === 'ability') {
         if (data.ability === 'track') {
-          this.cameras.main.flash(180, 90, 40, 150);
-          if (data.id !== this.myId) this.showToast('The Killer senses the dark.', 'danger');
+          if (data.id === this.myId) {
+            this.showToast('Pulse sent. Shapes brush against the dark.', 'info');
+          } else {
+            this.cameras.main.flash(180, 90, 40, 150);
+            this.showToast('The Killer senses the dark.', 'danger');
+          }
           if (PN.Audio) PN.Audio.play('pulse');
-        } else if (data.ability === 'sprint' && data.id !== this.myId) {
-          this.showToast('The Killer lunges forward!', 'danger');
-          if (PN.Audio) PN.Audio.play('sprint');
+        } else if (
+          (data.ability === 'lunge' || data.ability === 'sprint')
+        ) {
+          if (data.id === this.myId) return;
+          if (data.phase === 'windup') {
+            this.showToast('The Killer draws back to lunge!', 'danger');
+            const view = this.playerViews.get(data.id);
+            if (view) {
+              const tell = this.add
+                .circle(view.sprite.x, view.sprite.y, 26, 0xff3b3b, 0.18)
+                .setStrokeStyle(3, 0xff5d5d, 0.9)
+                .setDepth(27);
+              this.tweens.add({
+                targets: tell,
+                scale: 2.6,
+                alpha: 0,
+                duration: 420,
+                onComplete: () => tell.destroy(),
+              });
+            }
+            if (PN.Audio) PN.Audio.play('lungeWindup');
+          } else if (data.phase === 'recover') {
+            this.showToast('The Killer is off balance. Run!', 'success');
+            if (PN.Audio) PN.Audio.play('lungeRecover');
+          } else {
+            this.showToast('The Killer lunges!', 'danger');
+            if (PN.Audio) PN.Audio.play('sprint');
+          }
         } else if (data.ability === 'trap' && data.id === this.myId) {
           this.showToast('Trap armed. It fades after 30s.', 'info');
           if (PN.Audio) PN.Audio.play('arm');
@@ -3122,8 +3879,17 @@ function nearestMachine(machines, x, y, range, layout) {
       }
 
       if (type === 'quickPing' || type === 'noise') {
+        if (type === 'noise' && this.myRole !== 'killer') return;
         this.spawnMarker(data, type === 'noise' ? data.kind : data.kind);
-        if (type === 'noise' && PN.Audio) PN.Audio.play('noise');
+        if (type === 'noise' && PN.Audio) {
+          const pan = this.localSprite
+            ? clamp((data.x - this.localSprite.x) / 260, -1, 1)
+            : 0;
+          if (data.kind === 'breath') PN.Audio.spatial('breath', pan);
+          else if (data.kind === 'gasp') PN.Audio.spatial('gasp', pan);
+          else if (data.kind === 'woundedStep') PN.Audio.spatial('blood', pan);
+          else PN.Audio.spatial('noise', pan);
+        }
         return;
       }
 
@@ -3193,6 +3959,99 @@ function nearestMachine(machines, x, y, range, layout) {
         return;
       }
 
+      if (type === 'partPicked') {
+        if (data.id === this.myId) {
+          this.showToast('Fuse recovered. Carry it to a propmachine and press E.', 'success');
+        }
+        if (PN.Audio) PN.Audio.play('pickup');
+        return;
+      }
+
+      if (type === 'partInstalled') {
+        this.showToast('Fuse installed. Hold F to repair this machine.', 'success');
+        if (PN.Audio) PN.Audio.play('install');
+        return;
+      }
+
+      if (type === 'supplyPicked') {
+        if (data.id === this.myId) {
+          this.showToast(`Scavenged a ${data.type}. Press X to use it.`, 'success');
+        }
+        if (PN.Audio) PN.Audio.play('pickup');
+        return;
+      }
+
+      if (type === 'batteryPicked') {
+        if (data.id === this.myId) {
+          this.torch.charge = Math.min(1, this.torch.charge + 0.45);
+          this.torch.on = true;
+          this.showToast('Battery scavenged. The torch surges back to life.', 'success');
+        }
+        if (PN.Audio) PN.Audio.play('pickup');
+        return;
+      }
+
+      if (type === 'bloodTrail') {
+        if (this.myRole === 'survivor' && data.id !== this.myId) return;
+        this.spawnMarker({ x: data.x, y: data.y }, 'blood');
+        if (PN.Audio) PN.Audio.play('blood');
+        return;
+      }
+
+      if (type === 'trackPing') {
+        if (this.myRole === 'killer') {
+          this.spawnMarker({ x: data.x, y: data.y }, 'track');
+        }
+        return;
+      }
+
+      if (type === 'heartbeat') {
+        if (data.id && data.id !== this.myId) return;
+        const intensity = clamp(Number(data.intensity) || 0.1, 0.05, 1);
+        this.lastHeartbeatAt = this.time.now;
+        const vignette = document.getElementById('heartbeatVignette');
+        if (vignette) vignette.style.opacity = String(0.2 + intensity * 0.65);
+        if (PN.Audio && Math.random() < 0.35 + intensity * 0.6) {
+          PN.Audio.play('heartbeat');
+        }
+        if (!PN.settings || PN.settings.shake !== false) {
+          this.cameras.main.shake(80, 0.0012 * intensity);
+        }
+        return;
+      }
+
+      if (type === 'gasp') {
+        if (data.id === this.myId) {
+          this.showToast('You gasp for air! The Killer may have heard that.', 'danger');
+        }
+        if (PN.Audio) PN.Audio.play('gasp');
+        return;
+      }
+
+      if (type === 'blackout') {
+        if (data.active) {
+          this.showToast('The lights die. Something moves in the dark.', 'danger');
+          if (PN.Audio) PN.Audio.play('blackout');
+        } else {
+          this.showToast('The emergency lights flicker back on.', 'info');
+        }
+        return;
+      }
+
+      if (type === 'fogBurst') {
+        if (data.active) {
+          this.showToast('A wall of fog rolls in.', 'danger');
+          if (PN.Audio) PN.Audio.play('fog');
+        }
+        return;
+      }
+
+      if (type === 'lockerEmpty' && data.muffled) {
+        this.showToast('Something breathes inside. It held its breath.', 'danger');
+        if (PN.Audio) PN.Audio.play('creak');
+        return;
+      }
+
       if (type === 'exitOpen') {
         this.updateExitView({ x: data.x, y: data.y, open: true });
         return;
@@ -3209,6 +4068,11 @@ function nearestMachine(machines, x, y, range, layout) {
         alarm: 0xff3b3b,
         stun: 0xffe08a,
         locker: 0x9fd0ff,
+        track: 0xd08cff,
+        blood: 0xc2263b,
+        breath: 0xc9a6ff,
+        woundedStep: 0xc2263b,
+        gasp: 0xffb0b0,
         fail: 0xff7a7a,
       };
       const labels = {
@@ -3217,6 +4081,7 @@ function nearestMachine(machines, x, y, range, layout) {
         help: 'HELP',
         regroup: 'GROUP',
         alarm: 'ALARM!',
+        track: 'SENSE',
       };
       const color = colors[kind] || 0xffffff;
       const circle = this.add.circle(data.x, data.y, 10, color, 0.8).setDepth(28);
@@ -3311,7 +4176,7 @@ function nearestMachine(machines, x, y, range, layout) {
         controlsBar.textContent =
           this.myRole === 'killer'
             ? 'WASD MOVE | F FINISH | H CHECK LOCKER | SPACE SLASH | SHIFT LUNGE | Q PULSE | C TRAP | V PING | T CHAT'
-            : 'WASD MOVE | E MORPH | F REPAIR/ESCAPE | R REVIVE | G THROW | H LOCKER | X ITEM | L TORCH | SPACE CHECK | V PING | T CHAT';
+            : 'WASD MOVE | E USE/INSTALL | M MORPH | F REPAIR/ESCAPE | R REVIVE | G THROW | H LOCKER | X ITEM | L TORCH | SHIFT HOLD BREATH | SPACE CHECK | V PING | T CHAT';
       }
 
       this.updateBleedHud();
@@ -3324,24 +4189,31 @@ function nearestMachine(machines, x, y, range, layout) {
         healthLabel.textContent = 'THE HUNTER';
         healthFill.style.width = '100%';
       } else {
-        healthLabel.textContent = `${Math.round(health)} / ${this.cfg.maxHealth} HP`;
+        healthLabel.textContent = `${Math.round(health)} / ${this.cfg.maxHealth} HP${this.me.wounded ? ' - WOUNDED' : ''}`;
       }
+      healthFill.classList.toggle('wounded', !!this.me.wounded);
 
       objectiveCount.textContent = `${state.repairedCount} / ${state.totalMachines}`;
+      const installed = state.installedCount || 0;
+      const fuses = (state.parts || []).length;
+      const act = state.phase ? `ACT ${state.phase.act}. ` : '';
       objectiveHint.textContent = this.me.dead || this.me.escaped
         ? 'Spectating. The hunt continues.'
         : state.exit && state.exit.open
-          ? `Gate open. ${state.survivorsAlive} survivor${state.survivorsAlive === 1 ? '' : 's'} still inside.`
+          ? `${act}Gate open. ${state.survivorsAlive} survivor${state.survivorsAlive === 1 ? '' : 's'} still inside.`
           : this.me.role === 'killer'
-            ? `${state.survivorsAlive} survivor${state.survivorsAlive === 1 ? '' : 's'} still standing. Find them.`
-            : `Repair all propmachines. ${state.survivorsAlive} survivor${state.survivorsAlive === 1 ? '' : 's'} alive.`;
+            ? `${act}${state.survivorsAlive} survivor${state.survivorsAlive === 1 ? '' : 's'} still standing. Find them.`
+            : `${act}Fuses installed ${installed}/${state.totalMachines}. ${fuses} loose fuse${fuses === 1 ? '' : 's'} nearby.`;
 
       const itemLabel = document.getElementById('itemLabel');
       if (itemLabel) {
-        itemLabel.textContent =
-          this.me.role === 'survivor' && this.me.item
-            ? `${this.me.item.toUpperCase()}${this.me.itemUsed ? ' · USED' : ' · X'}`
-            : '';
+        const parts = [];
+        if (this.me.role === 'survivor' && this.me.item) {
+          parts.push(`${this.me.item.toUpperCase()}${this.me.itemUsed ? ' - USED' : ' - X'}`);
+        }
+        if (this.me.carryingPart) parts.push('CARRYING FUSE - E INSTALL');
+        if (this.me.wounded) parts.push('WOUNDED - BLEEDING');
+        itemLabel.textContent = parts.join('  |  ');
       }
 
       const powerLabel = document.getElementById('powerLabel');
@@ -3407,7 +4279,8 @@ function nearestMachine(machines, x, y, range, layout) {
         return;
       }
       if (this.me.hidden) {
-        hint.textContent = 'Hidden in a locker. Press H to peek out.';
+        hint.textContent =
+          `Hidden in a locker. H to peek out | SHIFT hold breath (${Math.round(this.me.breath || 0)}%)`;
         return;
       }
       if (this.myRole === 'killer') {
@@ -3421,11 +4294,11 @@ function nearestMachine(machines, x, y, range, layout) {
           const now = (this.lastState && this.lastState.t) || 0;
           const ready = (at) => (at && at > now ? `${Math.ceil((at - now) / 1000)}s` : 'ready');
           hint.textContent =
-            `SHIFT sprint (${ready(ability.sprintReadyAt)}) · ` +
-            `Q pulse (${ready(ability.trackReadyAt)}) · ` +
-            `C trap (${ready(ability.trapReadyAt)}) · F finish · SPACE slash · H check locker`;
+            `SHIFT lunge (${ready(ability.sprintReadyAt)}) | ` +
+            `Q pulse (${ready(ability.trackReadyAt)}) | ` +
+            `C trap (${ready(ability.trapReadyAt)}) | F finish | SPACE slash | H check locker`;
         } else {
-          hint.textContent = 'SHIFT sprint · Q pulse · C trap · F finish · SPACE slash · H locker';
+          hint.textContent = 'SHIFT lunge | Q pulse | C trap | F finish | SPACE slash | H locker';
         }
         return;
       }
@@ -3441,15 +4314,45 @@ function nearestMachine(machines, x, y, range, layout) {
         }
       }
 
+      if (this.me.carryingPart) {
+        const target = this.nearestUninstalledView(
+          (this.cfg.partInstallRange || 76) + 16,
+        );
+        if (target) {
+          hint.textContent = 'Press E to install the fuse in this propmachine.';
+          return;
+        }
+        const loose = this.partsRemaining();
+        hint.textContent = `Carrying a fuse. Find a propmachine without one (${loose} fuse${loose === 1 ? '' : 's'} still loose).`;
+        return;
+      }
+
+      const nearbyPart = this.nearestPartView((this.cfg.partPickupRange || 58) + 14);
+      if (nearbyPart) {
+        hint.textContent = 'Press E to pick up the fuse.';
+        return;
+      }
+
+      const nearbySupply = this.nearestSupplyView(50);
+      if (nearbySupply) {
+        hint.textContent = 'Press E to scavenge supplies.';
+        return;
+      }
+
+      if (this.nearestUninstalledView((this.cfg.partInstallRange || 76) + 16)) {
+        hint.textContent = 'This propmachine needs a fuse. Find one and bring it back.';
+        return;
+      }
+
       if (this.me.item === 'toolbox' && !this.me.itemUsed) {
-        const machine = this.nearestRepairView(this.cfg.repairRange + 96);
+        const machine = this.nearestRepairView(this.cfg.repairRange + 96, true);
         if (machine) {
           hint.textContent = 'Press X to slam the toolbox into the machine (+40%).';
           return;
         }
       }
-      if (this.me.item === 'medkit' && !this.me.itemUsed && this.me.health < this.cfg.maxHealth) {
-        hint.textContent = 'Press X to use the medkit (+50 HP).';
+      if (this.me.item === 'medkit' && !this.me.itemUsed && (this.me.health < this.cfg.maxHealth || this.me.wounded)) {
+        hint.textContent = 'Press X to use the medkit (+50 HP, stops bleeding).';
         return;
       }
       if (this.me.item === 'flashlight' && !this.me.itemUsed) {
@@ -3490,7 +4393,7 @@ function nearestMachine(machines, x, y, range, layout) {
       let nearest = null;
       let nearestDistance = Infinity;
       for (const view of this.machineViews.values()) {
-        if (view.repaired) continue;
+        if (view.repaired || !view.installed) continue;
         const d = dist(this.localSprite.x, this.localSprite.y, view.sprite.x, view.sprite.y);
         if (d < nearestDistance) {
           nearest = view;
@@ -3509,7 +4412,7 @@ function nearestMachine(machines, x, y, range, layout) {
           : 'Stand still and wait to blend in with the props.';
         return;
       }
-      hint.textContent = "Stay out of the Killer's sight. Hold F near a propmachine.";
+      hint.textContent = "Stay out of the Killer's sight. Find fuses, install them, then hold F to repair.";
     }
 
     nearestDownedView(range) {
@@ -3528,12 +4431,61 @@ function nearestMachine(machines, x, y, range, layout) {
       return best;
     }
 
-    nearestRepairView(range) {
+    nearestRepairView(range, installedOnly = false) {
       if (!this.localSprite) return null;
       let best = null;
       let bestDistance = Infinity;
       for (const view of this.machineViews.values()) {
         if (view.repaired) continue;
+        if (installedOnly && !view.installed) continue;
+        const d = dist(this.localSprite.x, this.localSprite.y, view.sprite.x, view.sprite.y);
+        if (d <= range && d < bestDistance) {
+          best = view;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    partsRemaining() {
+      if (this.mode === 'offline' && this.sim) return this.sim.parts.length;
+      return (this.lastState && this.lastState.parts ? this.lastState.parts.length : 0);
+    }
+
+    nearestPartView(range) {
+      if (!this.localSprite) return null;
+      let best = null;
+      let bestDistance = Infinity;
+      for (const view of this.partViews.values()) {
+        const d = dist(this.localSprite.x, this.localSprite.y, view.x, view.y);
+        if (d <= range && d < bestDistance) {
+          best = view;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    nearestSupplyView(range) {
+      if (!this.localSprite) return null;
+      let best = null;
+      let bestDistance = Infinity;
+      for (const view of this.supplyViews.values()) {
+        const d = dist(this.localSprite.x, this.localSprite.y, view.x, view.y);
+        if (d <= range && d < bestDistance) {
+          best = view;
+          bestDistance = d;
+        }
+      }
+      return best;
+    }
+
+    nearestUninstalledView(range) {
+      if (!this.localSprite) return null;
+      let best = null;
+      let bestDistance = Infinity;
+      for (const view of this.machineViews.values()) {
+        if (view.repaired || view.installed) continue;
         const d = dist(this.localSprite.x, this.localSprite.y, view.sprite.x, view.sprite.y);
         if (d <= range && d < bestDistance) {
           best = view;

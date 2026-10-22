@@ -30,17 +30,19 @@ const io = new Server(httpServer);
 const TILE_SIZE = 48;
 const PLAYER_HALF = 13;
 const MAX_PLAYERS = 5;
-const SURVIVOR_SPEED = 185;
-const KILLER_SPEED = SURVIVOR_SPEED * 1.2;
+const SURVIVOR_SPEED = 172;
+const KILLER_SPEED = SURVIVOR_SPEED * 1.1;
 const MORPH_SPEED_MULTIPLIER = 0.55;
+const WOUNDED_SPEED_MULTIPLIER = 0.9;
 const MAX_HEALTH = 100;
-const MELEE_DAMAGE = 100;
+const WOUNDED_HEALTH = 50;
+const MELEE_DAMAGE = 50;
 const ATTACK_RANGE = 82;
 const ATTACK_HALF_ANGLE = Math.PI / 4;
-const ATTACK_COOLDOWN_MS = 850;
-const MACHINE_REGRESS = 30;
+const ATTACK_COOLDOWN_MS = 1300;
+const MACHINE_REGRESS = 26;
 const REPAIR_RANGE = 72;
-const REPAIR_SECONDS = 10;
+const REPAIR_SECONDS = 22;
 const REPAIR_PER_SECOND = 100 / REPAIR_SECONDS;
 const VISION_RANGE = 560;
 const VISION_HALF_ANGLE = Math.PI / 4;
@@ -48,47 +50,73 @@ const CAMO_STILL_MS = 1100;
 const SNAPSHOT_HZ = 20;
 const MAX_CHAT_LENGTH = 160;
 
+// Two-stage machines: find a fuse, install it, then repair the machine.
+const PART_PICKUP_RANGE = 58;
+const PART_INSTALL_RANGE = 76;
+const PART_COUNT = 5;
+
 // Revives: survivors hold REVIVE next to a downed teammate.
 const REVIVE_RANGE = 64;
-const REVIVE_SECONDS = 4;
-const REVIVE_HEALTH = 50;
-const REVIVE_DECAY_PER_SECOND = 45;
+const REVIVE_SECONDS = 7.5;
+const REVIVE_HEALTH = 60;
+const REVIVE_DECAY_PER_SECOND = 24;
 
 // Escalation: repairing propmachines empowers the killer.
-const POWER_SPEED_PER_MACHINE = 0.09;
-const POWER_VISION_PER_MACHINE = 55;
-const POWER_COOLDOWN_PER_MACHINE = 0.08;
-const POWER_MIN_COOLDOWN_MS = 500;
+const POWER_SPEED_PER_MACHINE = 0.06;
+const POWER_VISION_PER_MACHINE = 40;
+const POWER_COOLDOWN_PER_MACHINE = 0.06;
+const POWER_MIN_COOLDOWN_MS = 650;
 
 // Killer super abilities, all sharpened by repaired propmachines.
-//   SHIFT - sprint burst, Q - tracking pulse, C - trap placement.
-const SPRINT_SPEED_MULTIPLIER = 2.4;
-const SPRINT_DURATION_MS = 1200;
-const SPRINT_COOLDOWN_MS = 6000;
-const SPRINT_MIN_COOLDOWN_MS = 1500;
+//   SHIFT - telegraphed lunge, Q - rough tracking pulse, C - trap placement.
+const LUNGE_SPEED_MULTIPLIER = 1.6;
+const LUNGE_WINDUP_MS = 420;
+const LUNGE_DURATION_MS = 620;
+const LUNGE_RECOVERY_MS = 760;
+const LUNGE_RECOVERY_SPEED = 0.52;
+const LUNGE_COOLDOWN_MS = 12000;
+const LUNGE_MIN_COOLDOWN_MS = 6500;
 
-const TRACK_DURATION_MS = 3000;
-const TRACK_COOLDOWN_MS = 14000;
-const TRACK_MIN_COOLDOWN_MS = 4000;
+const TRACK_DURATION_MS = 3200;
+const TRACK_COOLDOWN_MS = 18000;
+const TRACK_MIN_COOLDOWN_MS = 7000;
+const TRACK_PING_MS = 780;
+const TRACK_JITTER_ANGLE = 0.2;
+const TRACK_JITTER_DISTANCE = 0.24;
 
 const TRAP_RADIUS = 26;
-const TRAP_ARM_MS = 600;
-const TRAP_ROOT_MS = 2200;
-const TRAP_ROOT_PER_MACHINE = 250;
+const TRAP_ARM_MS = 700;
+const TRAP_ROOT_MS = 3000;
+const TRAP_ROOT_PER_MACHINE = 300;
 const TRAP_LIFETIME_MS = 30000;
-const TRAP_COOLDOWN_MS = 3000;
-const TRAP_MIN_COOLDOWN_MS = 800;
-const TRAP_MAX = 4;
+const TRAP_COOLDOWN_MS = 6500;
+const TRAP_MIN_COOLDOWN_MS = 2500;
+const TRAP_MAX = 3;
 
 // Bleed-out and the killer's finishing channel.
-const BLEEDOUT_SECONDS = 45;
+const BLEEDOUT_SECONDS = 70;
 const FINISH_RANGE = 56;
-const FINISH_SECONDS = 2.5;
-const FINISH_DECAY_PER_SECOND = 60;
+const FINISH_SECONDS = 4.5;
+const FINISH_DECAY_PER_SECOND = 30;
 
 // Escape gate: opens when every propmachine is online.
-const EXIT_RANGE = 56;
-const ESCAPE_SECONDS = 3.5;
+const EXIT_RANGE = 64;
+const ESCAPE_SECONDS = 9;
+const ESCAPE_DECAY_PER_SECOND = 45;
+
+// Atmosphere events: blackouts and drifting fog banks.
+const BLACKOUT_MIN_DELAY_MS = 32000;
+const BLACKOUT_MAX_DELAY_MS = 55000;
+const BLACKOUT_DURATION_MS = 8500;
+const FOG_BURST_MIN_DELAY_MS = 38000;
+const FOG_BURST_MAX_DELAY_MS = 62000;
+const FOG_BURST_DURATION_MS = 12000;
+const FOG_BURST_RADIUS = 230;
+
+// Scavenging: limited supplies scattered away from the objectives.
+const SCAVENGE_MAX = 5;
+const SCAVENGE_RANGE = 52;
+const SCAVENGE_TYPES = ['medkit', 'toolbox', 'battery'];
 
 // Repair skill checks.
 const SKILL_MIN_MS = 3500;
@@ -113,6 +141,8 @@ const THROW_COOLDOWN_MS = 9000;
 // Lockers.
 const LOCKER_RANGE = 48;
 const LOCKER_EJECT_ROOT_MS = 1200;
+const BREATH_HOLD_MAX_MS = 5200;
+const BREATH_RECOVER_PER_SECOND = 950;
 
 // Survivor one-use items.
 const ITEM_USE_RANGE = 96;
@@ -137,12 +167,16 @@ const GAME_CONFIG = Object.freeze({
   morphSpeedMultiplier: MORPH_SPEED_MULTIPLIER,
   playerHalf: PLAYER_HALF,
   maxHealth: MAX_HEALTH,
+  woundedHealth: WOUNDED_HEALTH,
+  woundedSpeedMultiplier: WOUNDED_SPEED_MULTIPLIER,
   meleeDamage: MELEE_DAMAGE,
   attackRange: ATTACK_RANGE,
   attackHalfAngle: ATTACK_HALF_ANGLE,
   attackCooldownMs: ATTACK_COOLDOWN_MS,
   repairRange: REPAIR_RANGE,
   repairSeconds: REPAIR_SECONDS,
+  partPickupRange: PART_PICKUP_RANGE,
+  partInstallRange: PART_INSTALL_RANGE,
   visionRange: VISION_RANGE,
   visionHalfAngle: VISION_HALF_ANGLE,
   camoStillMs: CAMO_STILL_MS,
@@ -157,16 +191,20 @@ const GAME_CONFIG = Object.freeze({
     minCooldownMs: POWER_MIN_COOLDOWN_MS,
   },
   abilities: {
-    sprint: {
-      speedMultiplier: SPRINT_SPEED_MULTIPLIER,
-      durationMs: SPRINT_DURATION_MS,
-      cooldownMs: SPRINT_COOLDOWN_MS,
-      minCooldownMs: SPRINT_MIN_COOLDOWN_MS,
+    lunge: {
+      speedMultiplier: LUNGE_SPEED_MULTIPLIER,
+      windupMs: LUNGE_WINDUP_MS,
+      durationMs: LUNGE_DURATION_MS,
+      recoveryMs: LUNGE_RECOVERY_MS,
+      recoverySpeed: LUNGE_RECOVERY_SPEED,
+      cooldownMs: LUNGE_COOLDOWN_MS,
+      minCooldownMs: LUNGE_MIN_COOLDOWN_MS,
     },
     track: {
       durationMs: TRACK_DURATION_MS,
       cooldownMs: TRACK_COOLDOWN_MS,
       minCooldownMs: TRACK_MIN_COOLDOWN_MS,
+      pingMs: TRACK_PING_MS,
     },
     trap: {
       radius: TRAP_RADIUS,
@@ -184,6 +222,7 @@ const GAME_CONFIG = Object.freeze({
   finishSeconds: FINISH_SECONDS,
   exitRange: EXIT_RANGE,
   escapeSeconds: ESCAPE_SECONDS,
+  escapeDecayPerSecond: ESCAPE_DECAY_PER_SECOND,
   skillCheck: {
     minMs: SKILL_MIN_MS,
     maxMs: SKILL_MAX_MS,
@@ -220,12 +259,18 @@ function killerPower(room) {
       POWER_MIN_COOLDOWN_MS,
       Math.round(ATTACK_COOLDOWN_MS * (1 - POWER_COOLDOWN_PER_MACHINE * repaired)),
     ),
-    sprintSpeedMultiplier: SPRINT_SPEED_MULTIPLIER,
-    sprintDurationMs: SPRINT_DURATION_MS,
-    sprintCooldownMs: scaledCooldown(SPRINT_COOLDOWN_MS, SPRINT_MIN_COOLDOWN_MS, repaired),
+    lungeSpeedMultiplier: LUNGE_SPEED_MULTIPLIER,
+    lungeWindupMs: LUNGE_WINDUP_MS,
+    lungeDurationMs: LUNGE_DURATION_MS,
+    lungeRecoveryMs: LUNGE_RECOVERY_MS,
+    lungeRecoverySpeed: LUNGE_RECOVERY_SPEED,
+    sprintSpeedMultiplier: LUNGE_SPEED_MULTIPLIER,
+    sprintDurationMs: LUNGE_DURATION_MS,
+    sprintCooldownMs: scaledCooldown(LUNGE_COOLDOWN_MS, LUNGE_MIN_COOLDOWN_MS, repaired),
     trackDurationMs: TRACK_DURATION_MS,
     trackCooldownMs: scaledCooldown(TRACK_COOLDOWN_MS, TRACK_MIN_COOLDOWN_MS, repaired),
-    maxTraps: Math.min(TRAP_MAX, 1 + repaired),
+    trackPingMs: TRACK_PING_MS,
+    maxTraps: Math.min(TRAP_MAX, 2 + repaired),
     trapRootMs: TRAP_ROOT_MS + TRAP_ROOT_PER_MACHINE * repaired,
     trapCooldownMs: scaledCooldown(TRAP_COOLDOWN_MS, TRAP_MIN_COOLDOWN_MS, repaired),
   };
@@ -247,7 +292,7 @@ const MAPS = {
   asylum: {
     id: 'asylum',
     name: 'Blackwood Asylum',
-    description: 'Tight hospital corridors. Great for looping the killer.',
+    description: 'A sprawling ward of tight rooms, blind corners and long service halls.',
     style: {
       floor: '#151922',
       floorLine: '#697a94',
@@ -258,35 +303,41 @@ const MAPS = {
       fog: '#02030a',
     },
     layout: [
-      '###########################',
-      '#.........#.....#.........#',
-      '#.........#.....#.........#',
-      '#..#####..#.....#..#####..#',
-      '#..#...#..#.....#..#...#..#',
-      '#..#...#.........#...#....#',
-      '#..#...#####.#...#####....#',
-      '#...........#.............#',
-      '#....#####..#..#####......#',
-      '#....#...........#........#',
-      '#....#....#...#...#.......#',
-      '#.........#...#...........#',
-      '#..#####..#...#..#####....#',
-      '#.........................#',
-      '###########################',
+      '###################################',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '#..##...............##.......##...#',
+      '#..##...#........#..##....#..##...#',
+      '#.......#........#........#.......#',
+      '####.########.########.########.###',
+      '#.......#........#........#.......#',
+      '#.......#..#.##..#........#.......#',
+      '#..........#.##...................#',
+      '#.......#..#.....#........#.......#',
+      '#.......#........#........#.......#',
+      '####.########.########.########.###',
+      '#.......#........#........#.......#',
+      '#.......#...#....#........#..##...#',
+      '#...........#................##...#',
+      '#.......#...#....#........#.......#',
+      '#.......#........#........#.......#',
+      '###################################',
     ],
-    machineTiles: [[5, 5], [22, 5], [5, 11], [21, 11]],
-    spawnTiles: [[2, 12], [24, 12], [2, 2], [24, 2], [13, 7]],
+    machineTiles: [[4, 2], [30, 2], [4, 15], [30, 16]],
+    partTiles: [[15, 2], [18, 9], [11, 15], [31, 9], [15, 16]],
+    spawnTiles: [[2, 2], [32, 2], [2, 16], [32, 16], [17, 9]],
     propTypes: ['crate', 'barrel', 'gurney', 'canister', 'chair', 'plant'],
-    ambientCount: 68,
-    exitTile: [13, 13],
-    lockerTiles: [[2, 7], [24, 7], [2, 10]],
-    alarmTiles: [[13, 4]],
-    fogTiles: [[20, 10]],
+    ambientCount: 112,
+    scavengeCount: 5,
+    exitTile: [17, 15],
+    lockerTiles: [[2, 9], [32, 9], [9, 4], [25, 14]],
+    alarmTiles: [[15, 14]],
+    fogTiles: [[25, 8]],
   },
   warehouse: {
     id: 'warehouse',
     name: 'Rustworks Warehouse',
-    description: 'Long open lanes and shipping clutter. Watch the sightlines.',
+    description: 'Long open lanes, crate stacks and too many sightlines.',
     style: {
       floor: '#1b1b1f',
       floorLine: '#7d7d86',
@@ -297,35 +348,41 @@ const MAPS = {
       fog: '#050407',
     },
     layout: [
-      '###########################',
-      '#.........#.......#.......#',
-      '#.........#.......#.......#',
-      '#....##...#.......#..##...#',
-      '#....##...#.......#..##...#',
-      '#.........#.......#.......#',
-      '#.........#.......#.......#',
-      '#.........................#',
-      '#....##...#.......#..##...#',
-      '#....##...#.......#..##...#',
-      '#.........#.......#.......#',
-      '#.........#.......#.......#',
-      '#....##...#.......#..##...#',
-      '#.........#.......#.......#',
-      '###########################',
+      '###################################',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '#..###..#...###..#...###..#..###..#',
+      '#..###......###......###.....###..#',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '#..###..#...###..#...###..#..###..#',
+      '#..###......###......###.....###..#',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '#####.######.#########.######.#####',
+      '#.......#........#........#.......#',
+      '#..###......###......###.....###..#',
+      '#..###..#...###..#...###..#..###..#',
+      '#.......#........#........#.......#',
+      '#.......#........#........#.......#',
+      '###################################',
     ],
-    machineTiles: [[3, 3], [23, 3], [3, 11], [23, 11]],
-    spawnTiles: [[2, 1], [24, 1], [2, 13], [24, 13], [13, 7]],
+    machineTiles: [[4, 2], [30, 2], [4, 16], [30, 16]],
+    partTiles: [[15, 2], [19, 9], [11, 16], [32, 9], [15, 17]],
+    spawnTiles: [[2, 2], [32, 2], [2, 16], [32, 16], [17, 9]],
     propTypes: ['crate', 'barrel', 'pallet', 'canister', 'toolbox', 'cone'],
-    ambientCount: 62,
-    exitTile: [13, 13],
-    lockerTiles: [[2, 7], [24, 7], [9, 13]],
-    alarmTiles: [[13, 4]],
-    fogTiles: [[15, 9]],
+    ambientCount: 120,
+    scavengeCount: 5,
+    exitTile: [18, 16],
+    lockerTiles: [[2, 9], [32, 9], [9, 4], [25, 14]],
+    alarmTiles: [[15, 14]],
+    fogTiles: [[25, 8]],
   },
   manor: {
     id: 'manor',
     name: 'Hollow Manor',
-    description: 'Grand side rooms joined by a central hall. Prop heaven.',
+    description: 'Grand side rooms and a dark central hall. Every shadow could be a prop.',
     style: {
       floor: '#1d1714',
       floorLine: '#7a6350',
@@ -336,30 +393,36 @@ const MAPS = {
       fog: '#07040a',
     },
     layout: [
-      '###########################',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#####.#####.......#',
-      '#.........................#',
-      '#.......#####.#####.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '#.......#.........#.......#',
-      '###########################',
+      '###################################',
+      '#......#.........#.........#......#',
+      '#......#.........#.........#......#',
+      '#...##...........#...........##...#',
+      '#...##.#.........#.........#.##...#',
+      '#......#.........#.........#......#',
+      '#####.######.#########.######.#####',
+      '#......#.........#.........#......#',
+      '#......#...##....#......##.#......#',
+      '#..........##...........##........#',
+      '#......#.........#.........#......#',
+      '#......#.........#.........#......#',
+      '#####.######.#########.######.#####',
+      '#......#.........#.........#......#',
+      '#......#..##.....#...##....#......#',
+      '#.........##.........##...........#',
+      '#......#.........#.........#......#',
+      '#......#.........#.........#......#',
+      '###################################',
     ],
-    machineTiles: [[3, 2], [13, 2], [23, 2], [13, 11]],
-    spawnTiles: [[2, 12], [24, 12], [2, 2], [24, 2], [13, 7]],
+    machineTiles: [[4, 2], [30, 2], [4, 15], [30, 15]],
+    partTiles: [[15, 2], [20, 9], [11, 16], [31, 9], [15, 17]],
+    spawnTiles: [[2, 2], [32, 2], [2, 16], [32, 16], [17, 9]],
     propTypes: ['chair', 'plant', 'lamp', 'vase', 'table', 'crate'],
-    ambientCount: 56,
-    exitTile: [13, 13],
-    lockerTiles: [[2, 7], [24, 7], [2, 10]],
-    alarmTiles: [[13, 3]],
-    fogTiles: [[20, 10]],
+    ambientCount: 108,
+    scavengeCount: 5,
+    exitTile: [17, 15],
+    lockerTiles: [[2, 9], [32, 9], [9, 4], [25, 14]],
+    alarmTiles: [[15, 14]],
+    fogTiles: [[20, 8]],
   },
 };
 
@@ -385,9 +448,11 @@ function publicMapDefinition(id) {
     style: map.style,
     layout: map.layout,
     machineTiles: map.machineTiles,
+    partTiles: map.partTiles,
     spawnTiles: map.spawnTiles,
     propTypes: map.propTypes,
     ambientCount: map.ambientCount,
+    scavengeCount: map.scavengeCount,
     exitTile: map.exitTile,
     lockerTiles: map.lockerTiles,
     alarmTiles: map.alarmTiles,
@@ -623,8 +688,10 @@ function createPlayer(socketId) {
       throw: false,
       locker: false,
       useItem: false,
+      interact: false,
     },
     health: MAX_HEALTH,
+    wounded: false,
     downed: false,
     dead: false,
     bleedOutAt: 0,
@@ -637,10 +704,19 @@ function createPlayer(socketId) {
     lastAttackAt: 0,
     sprintUntil: 0,
     nextSprintAt: 0,
+    lungeWindupUntil: 0,
+    lungeRecoverUntil: 0,
+    lungeStarted: false,
     trackUntil: 0,
     nextTrackAt: 0,
+    nextTrackPingAt: 0,
     nextTrapAt: 0,
     rootUntil: 0,
+    carryingPart: null,
+    breathMs: BREATH_HOLD_MAX_MS,
+    gasped: false,
+    nextBloodAt: 0,
+    nextWoundedBreathAt: 0,
     finishing: false,
     finishProgress: 0,
     finishingId: null,
@@ -678,10 +754,12 @@ function resetInput(player) {
   player.input.throw = false;
   player.input.locker = false;
   player.input.useItem = false;
+  player.input.interact = false;
 }
 
 function resetPlayerForRound(player) {
   player.health = MAX_HEALTH;
+  player.wounded = false;
   player.downed = false;
   player.dead = false;
   player.bleedOutAt = 0;
@@ -694,8 +772,12 @@ function resetPlayerForRound(player) {
   player.lastAttackAt = 0;
   player.sprintUntil = 0;
   player.nextSprintAt = 0;
+  player.lungeWindupUntil = 0;
+  player.lungeRecoverUntil = 0;
+  player.lungeStarted = false;
   player.trackUntil = 0;
   player.nextTrackAt = 0;
+  player.nextTrackPingAt = 0;
   player.nextTrapAt = 0;
   player.rootUntil = 0;
   player.finishing = false;
@@ -707,6 +789,11 @@ function resetPlayerForRound(player) {
   player.item = null;
   player.itemUsed = false;
   player.throwReadyAt = 0;
+  player.carryingPart = null;
+  player.breathMs = BREATH_HOLD_MAX_MS;
+  player.gasped = false;
+  player.nextBloodAt = 0;
+  player.nextWoundedBreathAt = 0;
   player.nextNoiseAt = 0;
   player.skillCheck = null;
   player.nextSkillAt = 0;
@@ -717,6 +804,7 @@ function resetPlayerForRound(player) {
 
 function downPlayer(player) {
   player.health = 0;
+  player.wounded = false;
   player.downed = true;
   player.dead = false;
   player.bleedOutAt = Date.now() + BLEEDOUT_SECONDS * 1000;
@@ -731,6 +819,10 @@ function downPlayer(player) {
   player.skillCheck = null;
   player.finishing = false;
   player.finishProgress = 0;
+  player.escapeProgress = 0;
+  player.sprintUntil = 0;
+  player.lungeWindupUntil = 0;
+  player.lungeRecoverUntil = 0;
   resetInput(player);
 }
 
@@ -787,8 +879,91 @@ function makeMachines(map) {
       y: center.y,
       progress: 0,
       repaired: false,
+      installed: false,
     };
   });
+}
+
+function makeParts(map, machines) {
+  const tiles = map.partTiles && map.partTiles.length > 0
+    ? map.partTiles
+    : map.machineTiles;
+  return tiles.slice(0, PART_COUNT).map(([col, row], index) => {
+    const center = tileCenter(col, row);
+    return {
+      id: `fuse-${index + 1}`,
+      x: center.x,
+      y: center.y,
+    };
+  }).map((part, index) => {
+    const machine = machines[index % machines.length];
+    return { ...part, hint: machine ? machine.id : null };
+  });
+}
+
+function floorPoints(map) {
+  const points = [];
+  for (let row = 1; row < map.layout.length - 1; row += 1) {
+    for (let col = 1; col < map.layout[row].length - 1; col += 1) {
+      if (map.layout[row][col] === '.') points.push(tileCenter(col, row));
+    }
+  }
+  return points;
+}
+
+function makeScavenge(room, map) {
+  const points = floorPoints(map).filter((point) => {
+    const nearMachine = room.machines.some(
+      (machine) => distanceSq(point.x, point.y, machine.x, machine.y) < 150 * 150,
+    );
+    if (nearMachine) return false;
+    if (room.exit && distanceSq(point.x, point.y, room.exit.x, room.exit.y) < 130 * 130) {
+      return false;
+    }
+    return true;
+  });
+  const count = Math.min(
+    SCAVENGE_MAX,
+    map.scavengeCount || SCAVENGE_MAX,
+    points.length,
+  );
+  return shuffle(points).slice(0, count).map((point, index) => ({
+    id: `supply-${index + 1}`,
+    type: SCAVENGE_TYPES[index % SCAVENGE_TYPES.length],
+    x: point.x,
+    y: point.y,
+  }));
+}
+
+function nearestPart(room, x, y, range) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const part of room.parts || []) {
+    const d = Math.sqrt(distanceSq(x, y, part.x, part.y));
+    if (d > range || d >= bestDistance) continue;
+    best = part;
+    bestDistance = d;
+  }
+  return best;
+}
+
+function nearestSupply(room, x, y, range) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const supply of room.scavenge || []) {
+    const d = Math.sqrt(distanceSq(x, y, supply.x, supply.y));
+    if (d > range || d >= bestDistance) continue;
+    best = supply;
+    bestDistance = d;
+  }
+  return best;
+}
+
+function dropCarriedPart(room, player) {
+  if (!player.carryingPart) return;
+  const id = player.carryingPart;
+  player.carryingPart = null;
+  (room.parts || []).push({ id, x: player.x, y: player.y });
 }
 
 function makeLockers(map) {
@@ -863,6 +1038,13 @@ function emitNoise(room, x, y, kind) {
 
 function killerInFog(room, killer) {
   if (!killer) return false;
+  if (
+    room.fogBurst &&
+    distanceSq(killer.x, killer.y, room.fogBurst.x, room.fogBurst.y) <=
+      room.fogBurst.radius * room.fogBurst.radius
+  ) {
+    return true;
+  }
   return (room.fogs || []).some(
     (fog) => distanceSq(killer.x, killer.y, fog.x, fog.y) <= fog.radius * fog.radius,
   );
@@ -925,7 +1107,7 @@ function rollSkillCheck(player, now) {
 }
 
 function applySkillBonus(room, player) {
-  const machine = nearestMachine(room, player.x, player.y, 0, true);
+  const machine = nearestMachine(room, player.x, player.y, 0, true, true);
   if (machine && !machine.repaired) {
     machine.progress = clamp(machine.progress + SKILL_BONUS, 0, 100);
     if (machine.progress >= 100) completeMachine(room, machine, player);
@@ -934,7 +1116,7 @@ function applySkillBonus(room, player) {
 }
 
 function applySkillPenalty(room, player) {
-  const machine = nearestMachine(room, player.x, player.y, 0, true);
+  const machine = nearestMachine(room, player.x, player.y, 0, true, true);
   if (machine && !machine.repaired) {
     machine.progress = clamp(machine.progress - SKILL_PENALTY, 0, 100);
   }
@@ -964,7 +1146,7 @@ function useItem(room, player, now) {
       }
     }
   } else if (player.item === 'toolbox') {
-    const machine = nearestMachine(room, player.x, player.y, ITEM_USE_RANGE, true);
+    const machine = nearestMachine(room, player.x, player.y, ITEM_USE_RANGE, true, true);
     if (machine) {
       player.itemUsed = true;
       machine.progress = clamp(machine.progress + TOOLBOX_PROGRESS, 0, 100);
@@ -977,8 +1159,9 @@ function useItem(room, player, now) {
       emitNoise(room, player.x, player.y, 'toolbox');
     }
   } else if (player.item === 'medkit') {
-    if (player.health < MAX_HEALTH) {
+    if (player.health < MAX_HEALTH || player.wounded) {
       player.health = Math.min(MAX_HEALTH, player.health + MEDKIT_HEAL);
+      player.wounded = false;
       player.itemUsed = true;
       io.to(room.code).emit('itemUsed', {
         id: player.id,
@@ -1032,6 +1215,13 @@ function toggleLocker(room, player, now) {
     const victim = roomMembers(room).find(
       (member) => member.role === 'survivor' && member.hiddenIn === locker.id,
     );
+    if (victim && victim.breathMs > 0 && victim.input.sprint) {
+      io.to(killer.id).emit('lockerEmpty', {
+        lockerId: locker.id,
+        muffled: true,
+      });
+      return;
+    }
     if (victim) {
       victim.hiddenIn = null;
       victim.rootUntil = now + LOCKER_EJECT_ROOT_MS;
@@ -1064,6 +1254,8 @@ function toggleLocker(room, player, now) {
   player.propType = null;
   player.skillCheck = null;
   player.escapeProgress = 0;
+  player.breathMs = BREATH_HOLD_MAX_MS;
+  player.gasped = false;
   io.to(room.code).emit('locker', { id: player.id, hidden: true, lockerId: locker.id });
 }
 
@@ -1411,6 +1603,7 @@ function leaveRoom(player, options = {}) {
   if (!room) return;
 
   const wasKiller = player.role === 'killer' && room.state === 'playing';
+  if (room.state === 'playing') dropCarriedPart(room, player);
   room.members.delete(player.id);
   player.roomCode = null;
   player.role = 'survivor';
@@ -1493,6 +1686,8 @@ function createRoom(socket, player, options = {}) {
     round: 0,
     members: new Set(),
     machines: [],
+    parts: [],
+    scavenge: [],
     traps: [],
     trapSeq: 0,
     projectiles: [],
@@ -1502,6 +1697,13 @@ function createRoom(socket, player, options = {}) {
     fogs: [],
     exit: null,
     exitOpen: false,
+    blackoutActive: false,
+    blackoutUntil: 0,
+    nextBlackoutAt: 0,
+    fogBurst: null,
+    nextFogBurstAt: 0,
+    nextHeartbeatAt: 0,
+    startedAt: 0,
     lastKillerId: null,
     lastResult: null,
     chat: [],
@@ -1560,6 +1762,18 @@ function startGame(room, requesterId) {
   room.fogs = makeFogs(room.mapRef);
   room.exit = tileCenter(...room.mapRef.exitTile);
   room.exitOpen = false;
+  room.parts = makeParts(room.mapRef, room.machines);
+  room.scavenge = makeScavenge(room, room.mapRef);
+  const now = Date.now();
+  room.startedAt = now;
+  room.blackoutActive = false;
+  room.blackoutUntil = 0;
+  room.nextBlackoutAt =
+    now + BLACKOUT_MIN_DELAY_MS + Math.random() * (BLACKOUT_MAX_DELAY_MS - BLACKOUT_MIN_DELAY_MS);
+  room.fogBurst = null;
+  room.nextHeartbeatAt = 0;
+  room.nextFogBurstAt =
+    now + FOG_BURST_MIN_DELAY_MS + Math.random() * (FOG_BURST_MAX_DELAY_MS - FOG_BURST_MIN_DELAY_MS);
 
   // Role preference hints the killer pick; with 4+ players the previous
   // killer is skipped so the same person is not hunted every round.
@@ -1619,6 +1833,32 @@ function serializeMachine(machine) {
     y: machine.y,
     progress: Math.round(machine.progress * 10) / 10,
     repaired: machine.repaired,
+    installed: !!machine.installed,
+  };
+}
+
+function phaseForRoom(room, now) {
+  const elapsed = Math.max(0, now - (room.startedAt || now));
+  if (elapsed < 90000) return { act: 1, phase: 'explore', elapsedMs: elapsed };
+  if (elapsed < 240000) return { act: 2, phase: 'hunt', elapsedMs: elapsed };
+  if (elapsed < 420000) return { act: 3, phase: 'escalation', elapsedMs: elapsed };
+  return { act: 4, phase: 'finale', elapsedMs: elapsed };
+}
+
+function serializePart(part) {
+  return {
+    id: part.id,
+    x: Math.round(part.x),
+    y: Math.round(part.y),
+  };
+}
+
+function serializeSupply(supply) {
+  return {
+    id: supply.id,
+    type: supply.type,
+    x: Math.round(supply.x),
+    y: Math.round(supply.y),
   };
 }
 
@@ -1634,6 +1874,7 @@ function serializePlayer(player, viewer) {
     y: Math.round(player.y * 10) / 10,
     angle: Math.round(player.angle * 1000) / 1000,
     health: player.health,
+    wounded: !!player.wounded,
     downed: player.downed,
     dead: !!player.dead,
     escaped: !!player.escaped,
@@ -1646,6 +1887,8 @@ function serializePlayer(player, viewer) {
         : 0,
     item: isSelf ? player.item : null,
     itemUsed: isSelf ? !!player.itemUsed : false,
+    carryingPart: isSelf ? !!player.carryingPart : false,
+    breath: isSelf ? Math.round((player.breathMs / BREATH_HOLD_MAX_MS) * 100) : 0,
     throwReadyAt: isSelf ? player.throwReadyAt : 0,
     finishing: !!player.finishing,
     morphed: player.morphed,
@@ -1655,6 +1898,8 @@ function serializePlayer(player, viewer) {
     reviving: !!player.reviving,
     reviveProgress: player.downed ? Math.round(player.reviveProgress) : 0,
     sprinting: !!player.sprintUntil && now < player.sprintUntil,
+    lungeWindup: !!player.lungeWindupUntil && now < player.lungeWindupUntil,
+    lungeRecovering: !!player.lungeRecoverUntil && now < player.lungeRecoverUntil,
     rooted: !!player.rootUntil && now < player.rootUntil,
   };
 }
@@ -1670,7 +1915,6 @@ function buildStateFor(room, socketId) {
     power.visionRange = Math.round(power.visionRange * FOG_VISION_MULTIPLIER);
   }
   const visiblePlayers = [];
-  const tracking = recipient.role === 'killer' && recipient.trackUntil > now;
 
   for (const member of roomMembers(room)) {
     // Never reveal that another player is hidden inside a locker.
@@ -1683,7 +1927,6 @@ function buildStateFor(room, socketId) {
 
     if (
       isOtherSurvivor &&
-      !tracking &&
       !killerCanSee({ ...recipient, mapRef: map }, member, power.visionRange)
     ) {
       continue;
@@ -1701,6 +1944,8 @@ function buildStateFor(room, socketId) {
       ? {
           sprintUntil: recipient.sprintUntil,
           sprintReadyAt: recipient.nextSprintAt,
+          lungeWindupUntil: recipient.lungeWindupUntil,
+          lungeRecoverUntil: recipient.lungeRecoverUntil,
           trackUntil: recipient.trackUntil,
           trackReadyAt: recipient.nextTrackAt,
           trapReadyAt: recipient.nextTrapAt,
@@ -1722,7 +1967,23 @@ function buildStateFor(room, socketId) {
     players: visiblePlayers,
     machines: room.machines.map(serializeMachine),
     repairedCount: repairedMachineCount(room),
+    installedCount: room.machines.filter((machine) => machine.installed).length,
     totalMachines: room.machines.length,
+    parts: (room.parts || []).map(serializePart),
+    supplies: (room.scavenge || []).map(serializeSupply),
+    atmosphere: {
+      blackout: !!room.blackoutActive,
+      blackoutUntil: room.blackoutUntil || 0,
+      fog: room.fogBurst
+        ? {
+            x: Math.round(room.fogBurst.x),
+            y: Math.round(room.fogBurst.y),
+            radius: room.fogBurst.radius,
+            until: room.fogBurst.until,
+          }
+        : null,
+    },
+    phase: phaseForRoom(room, now),
     survivorsAlive: survivors.filter(
       (member) => !member.downed && !member.dead && !member.escaped,
     ).length,
@@ -1766,13 +2027,14 @@ function broadcastSnapshots(room) {
 // ---------------------------------------------------------------------------
 // Simulation
 // ---------------------------------------------------------------------------
-function nearestMachine(room, x, y, extraRange = 0, requireSight = false) {
+function nearestMachine(room, x, y, extraRange = 0, requireSight = false, requireInstalled = false) {
   let nearest = null;
   let nearestDistance = Infinity;
   const map = requireSight ? MAPS[room.mapId] : null;
 
   for (const machine of room.machines) {
     if (machine.repaired) continue;
+    if (requireInstalled && !machine.installed) continue;
     const distance = Math.sqrt(distanceSq(x, y, machine.x, machine.y));
     if (distance > REPAIR_RANGE + extraRange || distance >= nearestDistance) continue;
     if (requireSight && !hasLineOfSight(map, x, y, machine.x, machine.y)) continue;
@@ -1787,6 +2049,7 @@ function performAttack(room, killer) {
   const now = Date.now();
   const power = killerPower(room);
   if (killer.rootUntil > now) return;
+  if (killer.lungeWindupUntil > now || killer.lungeRecoverUntil > now) return;
   if (now - killer.lastAttackAt < power.attackCooldownMs) return;
 
   killer.lastAttackAt = now;
@@ -1810,7 +2073,12 @@ function performAttack(room, killer) {
     if (!hasLineOfSight(map, killer.x, killer.y, member.x, member.y)) continue;
 
     member.health = Math.max(0, member.health - MELEE_DAMAGE);
-    if (member.health <= 0) downPlayer(member);
+    if (member.health <= 0) {
+      dropCarriedPart(room, member);
+      downPlayer(member);
+    } else {
+      member.wounded = true;
+    }
     hitVictims.push(member.id);
   }
 
@@ -1877,30 +2145,41 @@ function performAttack(room, killer) {
   broadcastSnapshots(room);
 }
 
-// Killer abilities: sprint burst, tracking pulse, trap placement - all gated
-// by per-machine cooldowns from killerPower().
+// Killer abilities: telegraphed lunge, rough tracking pulse, trap placement.
 function handleKillerAbilities(room, killer, power, now) {
-  if (killer.rootUntil > now) return;
+  if (
+    killer.rootUntil > now ||
+    killer.lungeWindupUntil > now ||
+    killer.lungeRecoverUntil > now
+  ) {
+    return;
+  }
 
   if (pressed(killer, 'sprint') && now >= killer.nextSprintAt) {
     killer.nextSprintAt = now + power.sprintCooldownMs;
-    killer.sprintUntil = now + power.sprintDurationMs;
+    killer.lungeStarted = false;
+    killer.lungeWindupUntil = now + power.lungeWindupMs;
+    killer.sprintUntil = 0;
     io.to(room.code).emit('ability', {
       id: killer.id,
-      ability: 'sprint',
-      durationMs: power.sprintDurationMs,
+      ability: 'lunge',
+      phase: 'windup',
+      windupMs: power.lungeWindupMs,
+      durationMs: power.lungeDurationMs,
     });
+    addSystemChat(room, 'The Killer coils in the dark...');
   }
 
   if (pressed(killer, 'track') && now >= killer.nextTrackAt) {
     killer.nextTrackAt = now + power.trackCooldownMs;
     killer.trackUntil = now + power.trackDurationMs;
+    killer.nextTrackPingAt = now;
     io.to(room.code).emit('ability', {
       id: killer.id,
       ability: 'track',
       durationMs: power.trackDurationMs,
     });
-    addSystemChat(room, `${killer.name} senses every survivor.`);
+    addSystemChat(room, `${killer.name} senses movement in the dark.`);
   }
 
   if (
@@ -1924,6 +2203,56 @@ function handleKillerAbilities(room, killer, power, now) {
       trapId: trap.id,
       x: killer.x,
       y: killer.y,
+    });
+  }
+}
+
+function updateLunge(room, killer, now) {
+  if (
+    killer.lungeWindupUntil > 0 &&
+    now >= killer.lungeWindupUntil
+  ) {
+    killer.lungeWindupUntil = 0;
+    killer.lungeStarted = true;
+    killer.sprintUntil = now + LUNGE_DURATION_MS;
+    io.to(room.code).emit('ability', {
+      id: killer.id,
+      ability: 'lunge',
+      phase: 'burst',
+      durationMs: LUNGE_DURATION_MS,
+    });
+  }
+
+  if (killer.sprintUntil > 0 && now >= killer.sprintUntil) {
+    killer.sprintUntil = 0;
+    killer.lungeRecoverUntil = now + LUNGE_RECOVERY_MS;
+    io.to(room.code).emit('ability', {
+      id: killer.id,
+      ability: 'lunge',
+      phase: 'recover',
+      recoveryMs: LUNGE_RECOVERY_MS,
+    });
+  }
+}
+
+function updateTrackPings(room, killer, now) {
+  if (killer.trackUntil <= now || now < killer.nextTrackPingAt) return;
+  killer.nextTrackPingAt = now + TRACK_PING_MS;
+  const map = MAPS[room.mapId];
+  const width = map.layout[0].length * TILE_SIZE;
+  const height = map.layout.length * TILE_SIZE;
+
+  for (const survivor of activeSurvivors(room)) {
+    if (survivor.downed || survivor.dead || survivor.escaped) continue;
+    const distance = Math.sqrt(distanceSq(killer.x, killer.y, survivor.x, survivor.y));
+    const angle =
+      Math.atan2(survivor.y - killer.y, survivor.x - killer.x) +
+      (Math.random() * 2 - 1) * TRACK_JITTER_ANGLE;
+    const roughDistance =
+      distance * (1 + (Math.random() * 2 - 1) * TRACK_JITTER_DISTANCE);
+    io.to(killer.id).emit('trackPing', {
+      x: Math.round(clamp(killer.x + Math.cos(angle) * roughDistance, 0, width)),
+      y: Math.round(clamp(killer.y + Math.sin(angle) * roughDistance, 0, height)),
     });
   }
 }
@@ -1975,6 +2304,186 @@ function updateTraps(room, power, now) {
   });
 }
 
+function pickUpPart(room, player) {
+  if (player.carryingPart) return false;
+  const part = nearestPart(room, player.x, player.y, PART_PICKUP_RANGE);
+  if (!part) return false;
+  room.parts = (room.parts || []).filter((entry) => entry.id !== part.id);
+  player.carryingPart = part.id;
+  io.to(room.code).emit('partPicked', {
+    id: player.id,
+    partId: part.id,
+    x: part.x,
+    y: part.y,
+  });
+  addSystemChat(room, `${player.name} found a fuse.`);
+  return true;
+}
+
+function installPart(room, player) {
+  if (!player.carryingPart) return false;
+  let machine = null;
+  let bestDistance = Infinity;
+  for (const candidate of room.machines) {
+    if (candidate.repaired || candidate.installed) continue;
+    const d = Math.sqrt(distanceSq(player.x, player.y, candidate.x, candidate.y));
+    if (d > PART_INSTALL_RANGE || d >= bestDistance) continue;
+    machine = candidate;
+    bestDistance = d;
+  }
+  if (!machine) return false;
+  machine.installed = true;
+  player.carryingPart = null;
+  io.to(room.code).emit('partInstalled', {
+    id: player.id,
+    machineId: machine.id,
+    installedCount: room.machines.filter((entry) => entry.installed).length,
+    totalMachines: room.machines.length,
+  });
+  addSystemChat(room, `A fuse was installed in ${machine.id}. Repair it now.`);
+  return true;
+}
+
+function pickUpSupply(room, player) {
+  const supply = nearestSupply(room, player.x, player.y, SCAVENGE_RANGE);
+  if (!supply) return false;
+  if (supply.type !== 'battery' && player.item && !player.itemUsed) return false;
+  room.scavenge = (room.scavenge || []).filter((entry) => entry.id !== supply.id);
+  if (supply.type === 'battery') {
+    io.to(player.id).emit('batteryPicked', {
+      id: player.id,
+      supplyId: supply.id,
+      x: supply.x,
+      y: supply.y,
+    });
+    addSystemChat(room, `${player.name} scavenged a battery.`);
+    return true;
+  }
+  player.item = supply.type;
+  player.itemUsed = false;
+  io.to(room.code).emit('supplyPicked', {
+    id: player.id,
+    type: supply.type,
+    x: supply.x,
+    y: supply.y,
+  });
+  addSystemChat(room, `${player.name} scavenged a ${supply.type}.`);
+  return true;
+}
+
+function handleInteract(room, player) {
+  if (installPart(room, player)) return;
+  if (pickUpPart(room, player)) return;
+  pickUpSupply(room, player);
+}
+
+function updateWoundedEffects(room, now) {
+  for (const player of roomMembers(room)) {
+    if (
+      player.role !== 'survivor' ||
+      !player.wounded ||
+      player.downed ||
+      player.dead ||
+      player.escaped ||
+      player.hiddenIn
+    ) {
+      continue;
+    }
+
+    const moving =
+      player.input.up || player.input.down || player.input.left || player.input.right;
+    if (moving && now >= player.nextBloodAt) {
+      player.nextBloodAt = now + 1100;
+      const payload = {
+        id: player.id,
+        x: Math.round(player.x),
+        y: Math.round(player.y),
+      };
+      io.to(player.id).emit('bloodTrail', payload);
+      const killer = roomMembers(room).find((member) => member.role === 'killer');
+      if (killer && killer.id !== player.id) io.to(killer.id).emit('bloodTrail', payload);
+    }
+
+    if (now >= player.nextWoundedBreathAt) {
+      player.nextWoundedBreathAt = now + 2300;
+      emitNoise(room, player.x, player.y, 'breath');
+    }
+  }
+}
+
+function updateTerror(room, now) {
+  const killer = roomMembers(room).find(
+    (member) => member.role === 'killer' && !member.downed && !member.dead,
+  );
+  if (!killer) return;
+  if (now < (room.nextHeartbeatAt || 0)) return;
+  room.nextHeartbeatAt = now + 850;
+
+  for (const survivor of roomMembers(room)) {
+    if (
+      survivor.role !== 'survivor' ||
+      survivor.downed ||
+      survivor.dead ||
+      survivor.escaped ||
+      survivor.disconnected
+    ) {
+      continue;
+    }
+    const distance = Math.sqrt(distanceSq(killer.x, killer.y, survivor.x, survivor.y));
+    if (distance > 560) continue;
+    io.to(survivor.id).emit('heartbeat', {
+      intensity: Math.round(clamp(1 - distance / 560, 0.05, 1) * 100) / 100,
+      hidden: !!survivor.hiddenIn,
+    });
+  }
+}
+
+function updateAtmosphere(room, now) {
+  if (!room.blackoutActive && now >= room.nextBlackoutAt) {
+    room.blackoutActive = true;
+    room.blackoutUntil = now + BLACKOUT_DURATION_MS;
+    room.nextBlackoutAt =
+      room.blackoutUntil +
+      BLACKOUT_MIN_DELAY_MS +
+      Math.random() * (BLACKOUT_MAX_DELAY_MS - BLACKOUT_MIN_DELAY_MS);
+    io.to(room.code).emit('blackout', {
+      active: true,
+      durationMs: BLACKOUT_DURATION_MS,
+    });
+    addSystemChat(room, 'The lights die. Something moves in the blackout.');
+  } else if (room.blackoutActive && now >= room.blackoutUntil) {
+    room.blackoutActive = false;
+    io.to(room.code).emit('blackout', { active: false });
+    addSystemChat(room, 'The emergency lights stutter back on.');
+  }
+
+  if (!room.fogBurst && now >= room.nextFogBurstAt) {
+    const points = floorPoints(MAPS[room.mapId]);
+    const point = points[Math.floor(Math.random() * points.length)];
+    room.fogBurst = {
+      x: point.x,
+      y: point.y,
+      radius: FOG_BURST_RADIUS,
+      until: now + FOG_BURST_DURATION_MS,
+    };
+    room.nextFogBurstAt =
+      now +
+      FOG_BURST_DURATION_MS +
+      FOG_BURST_MIN_DELAY_MS +
+      Math.random() * (FOG_BURST_MAX_DELAY_MS - FOG_BURST_MIN_DELAY_MS);
+    io.to(room.code).emit('fogBurst', {
+      active: true,
+      x: room.fogBurst.x,
+      y: room.fogBurst.y,
+      radius: room.fogBurst.radius,
+      durationMs: FOG_BURST_DURATION_MS,
+    });
+  } else if (room.fogBurst && now >= room.fogBurst.until) {
+    room.fogBurst = null;
+    io.to(room.code).emit('fogBurst', { active: false });
+  }
+}
+
 function updateSkillChecks(room, now) {
   for (const player of roomMembers(room)) {
     const check = player.skillCheck;
@@ -2007,6 +2516,7 @@ function handleSurvivorActions(room, player, now, dt, rooted) {
       );
 
       if (player.escapeProgress >= 100) {
+        if (player.carryingPart) dropCarriedPart(room, player);
         player.escaped = true;
         player.escapeProgress = 100;
         player.stats.escapes = 1;
@@ -2020,12 +2530,17 @@ function handleSurvivorActions(room, player, now, dt, rooted) {
     }
 
     if (!atExit) {
-      player.escapeProgress = Math.max(0, player.escapeProgress - 30 * dt);
+      player.escapeProgress = Math.max(
+        0,
+        player.escapeProgress - ESCAPE_DECAY_PER_SECOND * dt,
+      );
     }
   }
 
+  if (pressed(player, 'interact')) handleInteract(room, player);
+
   if (!player.morphed && input.repair && !rooted) {
-    const machine = nearestMachine(room, player.x, player.y, 0, true);
+    const machine = nearestMachine(room, player.x, player.y, 0, true, true);
     if (machine) {
       player.isRepairing = true;
       machine.progress = clamp(
@@ -2051,8 +2566,8 @@ function handleSurvivorActions(room, player, now, dt, rooted) {
 
   const moving = input.up || input.down || input.left || input.right;
   if (!rooted && moving && now >= player.nextNoiseAt) {
-    player.nextNoiseAt = now + NOISE_STEP_MS;
-    emitNoise(room, player.x, player.y, 'step');
+    player.nextNoiseAt = now + (player.wounded ? 680 : NOISE_STEP_MS);
+    emitNoise(room, player.x, player.y, player.wounded ? 'woundedStep' : 'step');
   }
 }
 
@@ -2065,11 +2580,16 @@ function simulateRoom(room, dt) {
   updateProjectiles(room, dt, now);
   updateHazards(room, now);
   updateBleedOut(room, now);
+  updateAtmosphere(room, now);
 
   const killer = roomMembers(room).find((member) => member.role === 'killer');
   if (killer && !killer.downed && !killer.dead) {
+    updateLunge(room, killer, now);
+    updateTrackPings(room, killer, now);
     updateFinish(room, killer, now, dt);
   }
+  updateWoundedEffects(room, now);
+  updateTerror(room, now);
 
   for (const player of roomMembers(room)) {
     if (player.dead || player.escaped) {
@@ -2094,12 +2614,30 @@ function simulateRoom(room, dt) {
     if (player.hiddenIn) {
       player.isRepairing = false;
       player.stillMs += dt * 1000;
+      if (player.role === 'survivor') {
+        const holding = !!player.input.sprint && player.breathMs > 0;
+        if (holding) {
+          player.breathMs = Math.max(0, player.breathMs - dt * 1000);
+          if (player.breathMs <= 0 && !player.gasped) {
+            player.gasped = true;
+            emitNoise(room, player.x, player.y, 'gasp');
+            io.to(room.code).emit('gasp', { id: player.id });
+          }
+        } else {
+          player.breathMs = Math.min(
+            BREATH_HOLD_MAX_MS,
+            player.breathMs + dt * BREATH_RECOVER_PER_SECOND,
+          );
+          if (player.breathMs > BREATH_HOLD_MAX_MS * 0.4) player.gasped = false;
+        }
+      }
       continue;
     }
 
     if (player.role === 'killer') handleKillerAbilities(room, player, power, now);
 
-    const rooted = player.rootUntil > now;
+    const lungeWindup = player.role === 'killer' && player.lungeWindupUntil > now;
+    const rooted = player.rootUntil > now || lungeWindup;
     let moveX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     let moveY = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (rooted) {
@@ -2117,8 +2655,14 @@ function simulateRoom(room, dt) {
       const baseSpeed =
         player.role === 'killer' ? power.killerSpeed : SURVIVOR_SPEED;
       let speed = baseSpeed * (player.morphed ? MORPH_SPEED_MULTIPLIER : 1);
+      if (player.role === 'survivor') {
+        if (player.wounded) speed *= WOUNDED_SPEED_MULTIPLIER;
+        if (player.carryingPart) speed *= 0.92;
+      }
       if (player.role === 'killer' && now < player.sprintUntil) {
-        speed *= power.sprintSpeedMultiplier || SPRINT_SPEED_MULTIPLIER;
+        speed *= power.lungeSpeedMultiplier || LUNGE_SPEED_MULTIPLIER;
+      } else if (player.role === 'killer' && player.lungeRecoverUntil > now) {
+        speed *= power.lungeRecoverySpeed || LUNGE_RECOVERY_SPEED;
       }
 
       const oldX = player.x;
@@ -2206,10 +2750,12 @@ function simulateRevives(room, dt) {
 
         victim.downed = false;
         victim.health = REVIVE_HEALTH;
+        victim.wounded = false;
         victim.reviveProgress = 0;
         victim.bleedOutAt = 0;
         victim.stillMs = 0;
         victim.finishProgress = 0;
+        victim.breathMs = BREATH_HOLD_MAX_MS;
         resetInput(victim);
         io.to(room.code).emit('revived', { id: victim.id });
         addSystemChat(room, `${victim.name} was revived.`);
@@ -2307,6 +2853,8 @@ function endRound(room, winner, reason) {
 function resetRoomToLobby(room) {
   room.state = 'lobby';
   room.machines = [];
+  room.parts = [];
+  room.scavenge = [];
   room.traps = [];
   room.trapSeq = 0;
   room.projectiles = [];
@@ -2316,6 +2864,13 @@ function resetRoomToLobby(room) {
   room.fogs = [];
   room.exit = null;
   room.exitOpen = false;
+  room.blackoutActive = false;
+  room.blackoutUntil = 0;
+  room.nextBlackoutAt = 0;
+  room.fogBurst = null;
+  room.nextFogBurstAt = 0;
+  room.nextHeartbeatAt = 0;
+  room.startedAt = 0;
   room.winner = null;
   room.endReason = null;
   room.lastResult = null;
@@ -2453,6 +3008,7 @@ io.on('connection', (socket) => {
     me.input.throw = data.throw === true;
     me.input.locker = data.locker === true;
     me.input.useItem = data.useItem === true;
+    me.input.interact = data.interact === true;
   });
 
   socket.on('skill:result', (data = {}) => {
