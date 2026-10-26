@@ -243,6 +243,26 @@ window.PN = window.PN || {};
       tone({ freq: 70, endFreq: 55, duration: 0.18, gain: 0.2 });
       tone({ freq: 65, endFreq: 50, duration: 0.16, gain: 0.16, delay: 0.22 });
     },
+    propHop() {
+      tone({ freq: 260, endFreq: 520, duration: 0.12, gain: 0.14, type: 'sine' });
+      noise({ duration: 0.06, gain: 0.06, filter: 1400 });
+    },
+    trapSnap() {
+      noise({ duration: 0.14, gain: 0.28, filter: 3600 });
+      tone({ freq: 940, endFreq: 240, duration: 0.09, gain: 0.18, type: 'sawtooth' });
+    },
+    decoy() {
+      noise({ duration: 0.16, gain: 0.18, filter: 1800 });
+      tone({ freq: 780, endFreq: 340, duration: 0.08, gain: 0.11, type: 'triangle', delay: 0.04 });
+    },
+    sprint() {
+      noise({ duration: 0.24, gain: 0.08, filter: 750 });
+      tone({ freq: 140, endFreq: 90, duration: 0.18, gain: 0.06, type: 'sine' });
+    },
+    spark() {
+      noise({ duration: 0.09, gain: 0.14, filter: 4500 });
+      tone({ freq: 1200, endFreq: 600, duration: 0.05, gain: 0.08, type: 'sawtooth' });
+    },
   };
 
   function play(name) {

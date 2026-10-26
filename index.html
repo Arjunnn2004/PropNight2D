@@ -160,6 +160,37 @@
     #torchRow.low #torchFill { animation: torch-warn 650ms ease-in-out infinite; }
     @keyframes torch-warn { 50% { opacity: 0.4; } }
 
+    .stamina-row { margin-top: 8px; }
+    .stamina-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.6px;
+    }
+    .stamina-key {
+      padding: 1px 5px;
+      color: #7df0a4;
+      border: 1px solid rgba(125, 240, 164, 0.45);
+      border-radius: 4px;
+      font-size: 9px;
+    }
+    .stamina-track { height: 6px; margin-top: 4px; }
+    #staminaFill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #2b9348, #55a630, #80b918);
+      border-radius: inherit;
+      box-shadow: 0 0 8px rgba(125, 240, 164, 0.35);
+      transition: width 100ms linear, background 160ms linear;
+    }
+    #staminaRow.exhausted #staminaFill {
+      background: linear-gradient(90deg, #595959, #8c8c8c);
+      box-shadow: none;
+    }
+
     .bleed-row { margin-top: 9px; }
     .bleed-head {
       color: #ff8a8a;
@@ -892,6 +923,10 @@
       <div id="mapLabel" class="map-label">MAP —</div>
       <div id="healthLabel" class="health-label">100 HP</div>
       <div class="health-track"><div id="healthFill"></div></div>
+      <div id="staminaRow" class="stamina-row hidden">
+        <div class="stamina-head"><span id="staminaLabel">STAMINA 100%</span><span class="stamina-key">SHIFT</span></div>
+        <div class="health-track stamina-track"><div id="staminaFill"></div></div>
+      </div>
       <div id="bleedRow" class="bleed-row hidden">
         <div class="bleed-head"><span id="bleedLabel">BLEEDING OUT</span></div>
         <div class="health-track bleed-track"><div id="bleedFill"></div></div>
@@ -921,7 +956,7 @@
     </div>
 
     <button id="btn-exit" class="btn tiny" style="position:absolute;bottom:52px;left:18px;pointer-events:auto">LEAVE MATCH</button>
-    <div id="controlsBar" class="controls">WASD MOVE &nbsp;&middot;&nbsp; E USE/INSTALL | M MORPH &nbsp;&middot;&nbsp; F REPAIR/ESCAPE &nbsp;&middot;&nbsp; R REVIVE &nbsp;&middot;&nbsp; G THROW &nbsp;&middot;&nbsp; H LOCKER &nbsp;&middot;&nbsp; X ITEM &nbsp;&middot;&nbsp; L TORCH &nbsp;&middot;&nbsp; SHIFT LUNGE/HOLD BREATH &nbsp;&middot;&nbsp; Q PULSE &nbsp;&middot;&nbsp; C TRAP | SPACE CHECK &nbsp;&middot;&nbsp; V PING &nbsp;&middot;&nbsp; T CHAT</div>
+    <div id="controlsBar" class="controls">WASD MOVE &nbsp;&middot;&nbsp; SHIFT SPRINT / BREATH &nbsp;&middot;&nbsp; SPACE HOP/CHECK &nbsp;&middot;&nbsp; E USE/DISARM &nbsp;&middot;&nbsp; M MORPH &nbsp;&middot;&nbsp; F REPAIR &nbsp;&middot;&nbsp; R REVIVE &nbsp;&middot;&nbsp; G THROW &nbsp;&middot;&nbsp; C DECOY &nbsp;&middot;&nbsp; X ITEM &nbsp;&middot;&nbsp; L TORCH</div>
   </div>
 
   <div id="roundIntro">

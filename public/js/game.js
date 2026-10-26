@@ -18,16 +18,17 @@ window.PN = window.PN || {};
 
   // Killer ability defaults, used only when the server omits abilities config.
   const LUNGE_SPEED_MULTIPLIER = 1.6;
-  const LUNGE_WINDUP_MS = 420;
+  const LUNGE_WINDUP_MS = 520;
   const LUNGE_DURATION_MS = 620;
-  const LUNGE_RECOVERY_MS = 760;
+  const LUNGE_RECOVERY_MS = 900;
   const LUNGE_RECOVERY_SPEED = 0.52;
   const TRAP_RADIUS = 26;
   const TRAP_ARM_MS = 700;
   const TRAP_LIFETIME_MS = 30000;
-  const TRACK_PING_MS = 780;
-  const TRACK_JITTER_ANGLE = 0.2;
-  const TRACK_JITTER_DISTANCE = 0.24;
+  const TRACK_PING_MS = 1200;
+  const TRACK_JITTER_ANGLE = 0.35;
+  const TRACK_JITTER_DISTANCE = 0.45;
+  const TRACK_MOVING_MEMORY_MS = 1500;
 
   const WOUNDED_SPEED_MULTIPLIER = 0.9;
   const MACHINE_REGRESS = 26;
@@ -51,8 +52,9 @@ window.PN = window.PN || {};
   const THROW_LIFETIME_MS = 900;
   const THROW_STUN_MS = 1600;
   const THROW_COOLDOWN_MS = 9000;
-  const NOISE_STEP_MS = 1000;
-  const NOISE_RANGE = 760;
+  const NOISE_STEP_MS = 1400;
+  const NOISE_RANGE = 500;
+  const NOISE_JITTER_PX = 70;
   const LOCKER_RANGE = 48;
   const LOCKER_EJECT_ROOT_MS = 1200;
   const BREATH_HOLD_MAX_MS = 5200;
@@ -71,6 +73,16 @@ window.PN = window.PN || {};
   const SCAVENGE_RANGE = 52;
   const PART_PICKUP_RANGE = 58;
   const PART_INSTALL_RANGE = 76;
+  const SURVIVOR_SPRINT_MULTIPLIER = 1.28;
+  const SURVIVOR_MAX_STAMINA_MS = 3800;
+  const SURVIVOR_STAMINA_RECOVER_PER_SECOND = 900;
+  const SURVIVOR_SPRINT_NOISE_MS = 720;
+  const PROP_HOP_COOLDOWN_MS = 700;
+  const PROP_HOP_BOOST_MULTIPLIER = 1.25;
+  const PROP_HOP_DURATION_MS = 220;
+  const TRAP_DISARM_RANGE = 52;
+  const DECOY_COOLDOWN_MS = 14000;
+  const DECOY_DISTANCE_PX = 160;
   const BLACKOUT_MIN_DELAY_MS = 32000;
   const BLACKOUT_MAX_DELAY_MS = 55000;
   const BLACKOUT_DURATION_MS = 8500;
@@ -246,6 +258,8 @@ function serializePlayer(player, config, now = 0, viewer = null) {
       lungeWindup: !!(player.lungeWindupUntil > now),
       lungeRecovering: !!(player.lungeRecoverUntil > now),
       rooted: !!(player.rootUntil > now),
+      stamina: isSelf && player.role === 'survivor' ? Math.round(((player.staminaMs != null ? player.staminaMs : SURVIVOR_MAX_STAMINA_MS) / SURVIVOR_MAX_STAMINA_MS) * 100) : 100,
+      hopping: !!(player.hopUntil > now),
     };
   }
 
@@ -300,7 +314,12 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         woundedHealth: 50,
         woundedSpeedMultiplier: WOUNDED_SPEED_MULTIPLIER,
         meleeDamage: 50,
-        attackCooldownMs: 1300,
+        attackRange: 82,
+        attackHalfAngle: Math.PI / 4,
+        attackCooldownMs: 1600,
+        visionRange: 560,
+        visionHalfAngle: Math.PI / 4,
+        camoStillMs: 1100,
         repairSeconds: 22,
         partPickupRange: PART_PICKUP_RANGE,
         partInstallRange: PART_INSTALL_RANGE,
@@ -481,6 +500,11 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         nextTrapAt: -9999,
         rootUntil: -9999,
         lastAttackAt: -9999,
+        staminaMs: SURVIVOR_MAX_STAMINA_MS,
+        lastSprintAt: 0,
+        hopUntil: 0,
+        nextHopAt: 0,
+        nextDecoyAt: 0,
         botTarget: null,
         botRetargetAt: 0,
         botRepairUntil: 0,
@@ -575,9 +599,13 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
       if (!killer) return;
       const distance = dist(killer.x, killer.y, x, y);
       if (distance > NOISE_RANGE) return;
+      const width = this.layout[0].length * TILE;
+      const height = this.layout.length * TILE;
+      const jitteredX = clamp(x + (Math.random() * 2 - 1) * NOISE_JITTER_PX, 0, width);
+      const jitteredY = clamp(y + (Math.random() * 2 - 1) * NOISE_JITTER_PX, 0, height);
       this.emit('noise', {
-        x: Math.round(x),
-        y: Math.round(y),
+        x: Math.round(jitteredX),
+        y: Math.round(jitteredY),
         kind,
         distance: Math.round(distance),
       });
@@ -970,8 +998,47 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
       this.parts.push({ id: part.id, x: player.x, y: player.y });
     }
 
+    disarmTrap(player) {
+      if (player.role !== 'survivor' || player.downed || player.dead || player.morphed) return false;
+      let nearest = null;
+      let nearestDist = Infinity;
+      for (const trap of this.traps) {
+        const d = dist(player.x, player.y, trap.x, trap.y);
+        if (d <= TRAP_DISARM_RANGE && d < nearestDist) {
+          nearest = trap;
+          nearestDist = d;
+        }
+      }
+      if (!nearest) return false;
+      this.traps = this.traps.filter((candidate) => candidate.id !== nearest.id);
+      this.emit('trapDisarmed', { id: player.id, trapId: nearest.id, x: nearest.x, y: nearest.y });
+      this.emitNoise(nearest.x, nearest.y, 'trapDisarm');
+      return true;
+    }
+
+    propHop(player) {
+      if (player.role !== 'survivor' || !player.morphed || player.downed || player.dead || player.hiddenIn) return;
+      const now = this.now;
+      if (now < (player.nextHopAt || 0)) return;
+      player.nextHopAt = now + PROP_HOP_COOLDOWN_MS;
+      player.hopUntil = now + PROP_HOP_DURATION_MS;
+      this.emit('propHop', { id: player.id, x: Math.round(player.x), y: Math.round(player.y) });
+    }
+
+    decoy(player) {
+      if (player.role !== 'survivor' || player.downed || player.dead || player.hiddenIn) return;
+      const now = this.now;
+      if (now < (player.nextDecoyAt || 0)) return;
+      player.nextDecoyAt = now + DECOY_COOLDOWN_MS;
+      const targetX = clamp(player.x + Math.cos(player.angle) * DECOY_DISTANCE_PX, 48, (this.layout[0].length - 1) * TILE);
+      const targetY = clamp(player.y + Math.sin(player.angle) * DECOY_DISTANCE_PX, 48, (this.layout.length - 1) * TILE);
+      this.emitNoise(targetX, targetY, 'decoy');
+      this.emit('decoy', { id: player.id, x: Math.round(targetX), y: Math.round(targetY) });
+    }
+
     handleInteract(player) {
       if (player.downed || player.dead || player.escaped || player.hiddenIn) return;
+      if (this.disarmTrap(player)) return;
       if (player.carryingPart) {
         const machine = this.machineForInstall(
           player.x,
@@ -1120,12 +1187,12 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         durationMs: LUNGE_DURATION_MS,
         recoveryMs: LUNGE_RECOVERY_MS,
         recoverySpeed: LUNGE_RECOVERY_SPEED,
-        cooldownMs: 12000,
+        cooldownMs: 16000,
         minCooldownMs: 6500,
       };
       const track = abilities.track || {
-        durationMs: 3200,
-        cooldownMs: 18000,
+        durationMs: 2200,
+        cooldownMs: 28000,
         minCooldownMs: 7000,
         pingMs: TRACK_PING_MS,
       };
@@ -1637,6 +1704,19 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         if (player.role === 'survivor') {
           if (player.wounded) speed *= this.config.woundedSpeedMultiplier;
           if (player.carryingPart) speed *= 0.92;
+          if (!player.morphed && intent.sprint && (player.staminaMs || 0) > 0) {
+            speed *= SURVIVOR_SPRINT_MULTIPLIER;
+            player.staminaMs = Math.max(0, (player.staminaMs || 0) - dt * 1000);
+            player.lastSprintAt = this.now;
+          } else if (this.now - (player.lastSprintAt || 0) > 900) {
+            player.staminaMs = Math.min(
+              SURVIVOR_MAX_STAMINA_MS,
+              (player.staminaMs || 0) + dt * SURVIVOR_STAMINA_RECOVER_PER_SECOND,
+            );
+          }
+          if (player.morphed && this.now < (player.hopUntil || 0)) {
+            speed *= PROP_HOP_BOOST_MULTIPLIER;
+          }
         }
         if (player.role === 'killer' && this.now < player.sprintUntil) {
           speed *= power.lungeSpeedMultiplier;
@@ -1645,15 +1725,22 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         }
         const oldX = player.x;
         const oldY = player.y;
-          moveEntity(this.layout, player, moveX * speed * dt, moveY * speed * dt);
-          player.stillMs = distSq(oldX, oldY, player.x, player.y) > 0.01 ? 0 : player.stillMs + dt * 1000;
-          if (player.role === 'survivor' && this.now >= player.nextNoiseAt) {
-            player.nextNoiseAt = this.now + (player.wounded ? 680 : NOISE_STEP_MS);
-            this.emitNoise(player.x, player.y, player.wounded ? 'woundedStep' : 'step');
-          }
-        } else {
+        moveEntity(this.layout, player, moveX * speed * dt, moveY * speed * dt);
+        player.stillMs = distSq(oldX, oldY, player.x, player.y) > 0.01 ? 0 : player.stillMs + dt * 1000;
+        if (player.role === 'survivor' && this.now >= player.nextNoiseAt) {
+          const isSprinting = !player.morphed && intent.sprint && (player.staminaMs || 0) > 0;
+          player.nextNoiseAt = this.now + (player.wounded ? 680 : isSprinting ? SURVIVOR_SPRINT_NOISE_MS : NOISE_STEP_MS);
+          this.emitNoise(player.x, player.y, player.wounded ? 'woundedStep' : isSprinting ? 'sprintStep' : 'step');
+        }
+      } else {
         if (intent.angle != null) player.angle = intent.angle;
         player.stillMs += dt * 1000;
+        if (player.role === 'survivor' && this.now - (player.lastSprintAt || 0) > 800) {
+          player.staminaMs = Math.min(
+            SURVIVOR_MAX_STAMINA_MS,
+            (player.staminaMs || 0) + dt * SURVIVOR_STAMINA_RECOVER_PER_SECOND,
+          );
+        }
       }
 
       player.isRepairing = false;
@@ -1801,7 +1888,8 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
           survivor.downed ||
           survivor.dead ||
           survivor.escaped ||
-          survivor.hiddenIn
+          survivor.hiddenIn ||
+          survivor.stillMs > TRACK_MOVING_MEMORY_MS
         ) {
           continue;
         }
@@ -2965,6 +3053,7 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
       this.updateLocalMarker();
       this.updateTorch(delta);
       this.updateDarkness();
+      this.updateRedStain();
       this.updateHorrorOverlay();
       this.updateAmbientHorror(delta);
 
@@ -2996,7 +3085,6 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
       const sprint =
         !blocked &&
         active &&
-        ((isKiller && !hidden) || (isSurvivor && hidden)) &&
         this.keys.sprint.isDown;
       const track = !blocked && active && !hidden && isKiller && this.keys.pulse.isDown;
       const trap = !blocked && active && !hidden && isKiller && this.keys.trap.isDown;
@@ -3043,6 +3131,12 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
           if (this.me.role === 'survivor') {
             if (this.me.wounded) speed *= this.cfg.woundedSpeedMultiplier || WOUNDED_SPEED_MULTIPLIER;
             if (this.me.carryingPart) speed *= 0.92;
+            if (!this.me.morphed && input.sprint && (this.me.stamina == null || this.me.stamina > 0)) {
+              speed *= SURVIVOR_SPRINT_MULTIPLIER;
+            }
+            if (this.me.morphed && this.me.hopping) {
+              speed *= PROP_HOP_BOOST_MULTIPLIER;
+            }
           }
           // Predict from the server-confirmed lunge phase, not the raw key, so
           // the local sprite does not rubber-band when a lunge ends.
@@ -3106,6 +3200,29 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         return;
       }
 
+      if (
+        this.myRole === 'survivor' &&
+        this.me.morphed &&
+        !this.me.downed &&
+        !this.me.dead &&
+        !this.me.escaped &&
+        Phaser.Input.Keyboard.JustDown(this.keys.attack)
+      ) {
+        this.triggerPropHop();
+        return;
+      }
+
+      if (
+        this.myRole === 'survivor' &&
+        !this.me.downed &&
+        !this.me.dead &&
+        !this.me.escaped &&
+        Phaser.Input.Keyboard.JustDown(this.keys.trap)
+      ) {
+        this.triggerDecoy();
+        return;
+      }
+
       if (this.myRole === 'survivor' && Phaser.Input.Keyboard.JustDown(this.keys.torch)) {
         this.toggleTorch();
       }
@@ -3138,6 +3255,44 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
           if (PN.Audio) PN.Audio.play('slash');
         }
       }
+    }
+
+    triggerPropHop() {
+      if (this.mode === 'online') {
+        if (this.socket && this.socket.connected) this.socket.emit('propHop');
+      } else if (this.sim) {
+        this.sim.propHop(this.sim.human);
+      }
+      if (this.localSprite) {
+        this.tweens.add({
+          targets: this.localSprite,
+          y: this.localSprite.y - 14,
+          scaleY: 1.18,
+          scaleX: 0.88,
+          yoyo: true,
+          duration: 140,
+          ease: 'Quad.Out',
+        });
+        const puff = this.add.circle(this.localSprite.x, this.localSprite.y + 10, 8, 0xaaaaaa, 0.45).setDepth(15);
+        this.tweens.add({
+          targets: puff,
+          scale: 2.2,
+          alpha: 0,
+          duration: 260,
+          onComplete: () => puff.destroy(),
+        });
+      }
+      if (PN.Audio) PN.Audio.play('propHop');
+    }
+
+    triggerDecoy() {
+      if (this.mode === 'online') {
+        if (this.socket && this.socket.connected) this.socket.emit('decoy');
+      } else if (this.sim) {
+        this.sim.decoy(this.sim.human);
+      }
+      this.showToast('Decoy thrown! A phantom noise distracts the hunter.', 'info');
+      if (PN.Audio) PN.Audio.play('decoy');
     }
 
     syncSkillCheck() {
@@ -3470,6 +3625,51 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
       this.beginLights();
       this.drawSurvivorLight();
       this.endLights();
+    }
+
+    updateRedStain() {
+      if (!this.redStainGraphics) {
+        this.redStainGraphics = this.add.graphics().setDepth(13);
+      }
+      this.redStainGraphics.clear();
+
+      let killerX = null;
+      let killerY = null;
+      let killerAngle = null;
+
+      if (this.me && this.me.role === 'killer' && this.localSprite) {
+        killerX = this.localSprite.x;
+        killerY = this.localSprite.y;
+        killerAngle = this.localAngle;
+      } else {
+        for (const view of this.playerViews.values()) {
+          if (view.raw && view.raw.role === 'killer' && view.sprite && view.sprite.visible) {
+            killerX = view.sprite.x;
+            killerY = view.sprite.y;
+            killerAngle = view.raw.angle || 0;
+            break;
+          }
+        }
+      }
+
+      if (killerX != null && killerY != null && killerAngle != null) {
+        const stainDist = 82;
+        const stainRadius = 36;
+        const cx = killerX + Math.cos(killerAngle) * stainDist;
+        const cy = killerY + Math.sin(killerAngle) * stainDist;
+
+        this.redStainGraphics.fillStyle(0xdd1122, 0.16);
+        this.redStainGraphics.fillCircle(cx, cy, stainRadius * 1.5);
+        this.redStainGraphics.fillStyle(0xff2233, 0.28);
+        this.redStainGraphics.fillCircle(cx, cy, stainRadius);
+        const coneHalf = Math.PI / 8;
+        this.redStainGraphics.beginPath();
+        this.redStainGraphics.moveTo(killerX, killerY);
+        this.redStainGraphics.arc(killerX, killerY, stainDist + stainRadius, killerAngle - coneHalf, killerAngle + coneHalf);
+        this.redStainGraphics.closePath();
+        this.redStainGraphics.fillStyle(0xdd1122, 0.10);
+        this.redStainGraphics.fillPath();
+      }
     }
 
     updateAmbientHorror(delta) {
@@ -3861,6 +4061,67 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         return;
       }
 
+      if (type === 'trapDisarmed') {
+        const burst = this.add.circle(data.x, data.y, 14, 0xffd37a, 0.85).setDepth(29);
+        this.tweens.add({
+          targets: burst,
+          scale: 2.5,
+          alpha: 0,
+          duration: 300,
+          onComplete: () => burst.destroy(),
+        });
+        if (data.id === this.myId) {
+          this.showToast('Bear trap disarmed!', 'success');
+        } else if (this.myRole === 'killer') {
+          this.showToast('One of your bear traps was disarmed!', 'danger');
+        }
+        if (PN.Audio) PN.Audio.play('trapSnap');
+        return;
+      }
+
+      if (type === 'propHop') {
+        if (data.id !== this.myId) {
+          const view = this.playerViews.get(data.id);
+          if (view && view.sprite) {
+            this.tweens.add({
+              targets: view.sprite,
+              y: view.sprite.y - 14,
+              scaleY: 1.18,
+              scaleX: 0.88,
+              yoyo: true,
+              duration: 140,
+              ease: 'Quad.Out',
+            });
+            const puff = this.add.circle(data.x, data.y + 10, 8, 0xaaaaaa, 0.45).setDepth(15);
+            this.tweens.add({
+              targets: puff,
+              scale: 2.2,
+              alpha: 0,
+              duration: 260,
+              onComplete: () => puff.destroy(),
+            });
+          }
+          if (PN.Audio) PN.Audio.play('propHop');
+        }
+        return;
+      }
+
+      if (type === 'decoy') {
+        const ping = this.add.circle(data.x, data.y, 8, 0x4fb2ff, 0.9).setDepth(28);
+        this.tweens.add({
+          targets: ping,
+          scale: 3.5,
+          alpha: 0,
+          duration: 500,
+          onComplete: () => ping.destroy(),
+        });
+        if (data.id !== this.myId && this.myRole === 'killer') {
+          this.showToast('Phantom noise detected!', 'danger');
+        }
+        if (PN.Audio) PN.Audio.play('decoy');
+        return;
+      }
+
       if (type === 'skillCheck') {
         this.showSkillCheck(data);
         if (PN.Audio) PN.Audio.play('skill');
@@ -4176,10 +4437,24 @@ function nearestMachine(machines, x, y, range, layout, requireInstalled = false)
         controlsBar.textContent =
           this.myRole === 'killer'
             ? 'WASD MOVE | F FINISH | H CHECK LOCKER | SPACE SLASH | SHIFT LUNGE | Q PULSE | C TRAP | V PING | T CHAT'
-            : 'WASD MOVE | E USE/INSTALL | M MORPH | F REPAIR/ESCAPE | R REVIVE | G THROW | H LOCKER | X ITEM | L TORCH | SHIFT HOLD BREATH | SPACE CHECK | V PING | T CHAT';
+            : 'WASD MOVE | SHIFT SPRINT / BREATH | SPACE HOP/CHECK | E USE/DISARM | M MORPH | F REPAIR | R REVIVE | G THROW | C DECOY | X ITEM | L TORCH';
       }
 
       this.updateBleedHud();
+
+      const staminaRow = document.getElementById('staminaRow');
+      if (staminaRow) {
+        const showStamina = this.myRole === 'survivor' && !this.me.dead && !this.me.escaped;
+        staminaRow.classList.toggle('hidden', !showStamina);
+        if (showStamina) {
+          const stamina = this.me.stamina != null ? this.me.stamina : 100;
+          const staminaFill = document.getElementById('staminaFill');
+          const staminaLabel = document.getElementById('staminaLabel');
+          if (staminaFill) staminaFill.style.width = `${stamina}%`;
+          if (staminaLabel) staminaLabel.textContent = `STAMINA ${stamina}%`;
+          staminaRow.classList.toggle('exhausted', stamina <= 10);
+        }
+      }
 
       const health = Math.max(0, this.me.health);
       healthFill.style.width = `${health}%`;

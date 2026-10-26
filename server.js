@@ -39,7 +39,7 @@ const WOUNDED_HEALTH = 50;
 const MELEE_DAMAGE = 50;
 const ATTACK_RANGE = 82;
 const ATTACK_HALF_ANGLE = Math.PI / 4;
-const ATTACK_COOLDOWN_MS = 1300;
+const ATTACK_COOLDOWN_MS = 1600;
 const MACHINE_REGRESS = 26;
 const REPAIR_RANGE = 72;
 const REPAIR_SECONDS = 22;
@@ -70,19 +70,20 @@ const POWER_MIN_COOLDOWN_MS = 650;
 // Killer super abilities, all sharpened by repaired propmachines.
 //   SHIFT - telegraphed lunge, Q - rough tracking pulse, C - trap placement.
 const LUNGE_SPEED_MULTIPLIER = 1.6;
-const LUNGE_WINDUP_MS = 420;
+const LUNGE_WINDUP_MS = 520;
 const LUNGE_DURATION_MS = 620;
-const LUNGE_RECOVERY_MS = 760;
+const LUNGE_RECOVERY_MS = 900;
 const LUNGE_RECOVERY_SPEED = 0.52;
-const LUNGE_COOLDOWN_MS = 12000;
+const LUNGE_COOLDOWN_MS = 16000;
 const LUNGE_MIN_COOLDOWN_MS = 6500;
 
-const TRACK_DURATION_MS = 3200;
-const TRACK_COOLDOWN_MS = 18000;
+const TRACK_DURATION_MS = 2200;
+const TRACK_COOLDOWN_MS = 28000;
 const TRACK_MIN_COOLDOWN_MS = 7000;
-const TRACK_PING_MS = 780;
-const TRACK_JITTER_ANGLE = 0.2;
-const TRACK_JITTER_DISTANCE = 0.24;
+const TRACK_PING_MS = 1200;
+const TRACK_JITTER_ANGLE = 0.35;
+const TRACK_JITTER_DISTANCE = 0.45;
+const TRACK_MOVING_MEMORY_MS = 1500;
 
 const TRAP_RADIUS = 26;
 const TRAP_ARM_MS = 700;
@@ -127,9 +128,10 @@ const SKILL_TOLERANCE_MS = 160;
 const SKILL_BONUS = 12;
 const SKILL_PENALTY = 14;
 
-// Noise pings the killer can hear.
-const NOISE_STEP_MS = 1000;
-const NOISE_RANGE = 760;
+// Noise pings the killer can hear. Positions are deliberately fuzzy.
+const NOISE_STEP_MS = 1400;
+const NOISE_RANGE = 500;
+const NOISE_JITTER_PX = 70;
 
 // Thrown props stun the killer.
 const THROW_SPEED = 520;
@@ -156,6 +158,24 @@ const ALARM_RADIUS = 78;
 const ALARM_COOLDOWN_MS = 9000;
 const FOG_VISION_MULTIPLIER = 0.55;
 
+// Survivor sprint and stamina
+const SURVIVOR_SPRINT_MULTIPLIER = 1.28;
+const SURVIVOR_MAX_STAMINA_MS = 3800;
+const SURVIVOR_STAMINA_RECOVER_PER_SECOND = 900;
+const SURVIVOR_SPRINT_NOISE_MS = 720;
+
+// Prop hops & bouncing
+const PROP_HOP_COOLDOWN_MS = 700;
+const PROP_HOP_BOOST_MULTIPLIER = 1.25;
+const PROP_HOP_DURATION_MS = 220;
+
+// Traps disarm
+const TRAP_DISARM_RANGE = 52;
+
+// Decoy distraction
+const DECOY_COOLDOWN_MS = 14000;
+const DECOY_DISTANCE_PX = 160;
+
 // Reconnect grace period.
 const RECONNECT_GRACE_MS = 60000;
 
@@ -180,10 +200,19 @@ const GAME_CONFIG = Object.freeze({
   visionRange: VISION_RANGE,
   visionHalfAngle: VISION_HALF_ANGLE,
   camoStillMs: CAMO_STILL_MS,
+  noiseRange: NOISE_RANGE,
+  noiseJitterPx: NOISE_JITTER_PX,
+  trackMovingMemoryMs: TRACK_MOVING_MEMORY_MS,
   maxPlayers: MAX_PLAYERS,
   reviveRange: REVIVE_RANGE,
   reviveSeconds: REVIVE_SECONDS,
   reviveHealth: REVIVE_HEALTH,
+  survivorSprintMultiplier: SURVIVOR_SPRINT_MULTIPLIER,
+  maxStaminaMs: SURVIVOR_MAX_STAMINA_MS,
+  propHopCooldownMs: PROP_HOP_COOLDOWN_MS,
+  propHopBoostMultiplier: PROP_HOP_BOOST_MULTIPLIER,
+  trapDisarmRange: TRAP_DISARM_RANGE,
+  decoyCooldownMs: DECOY_COOLDOWN_MS,
   power: {
     speedPerMachine: POWER_SPEED_PER_MACHINE,
     visionPerMachine: POWER_VISION_PER_MACHINE,
@@ -794,7 +823,11 @@ function resetPlayerForRound(player) {
   player.gasped = false;
   player.nextBloodAt = 0;
   player.nextWoundedBreathAt = 0;
-  player.nextNoiseAt = 0;
+  player.staminaMs = SURVIVOR_MAX_STAMINA_MS;
+  player.lastSprintAt = 0;
+  player.hopUntil = 0;
+  player.nextHopAt = 0;
+  player.nextDecoyAt = 0;
   player.skillCheck = null;
   player.nextSkillAt = 0;
   player.pressLatch = {};
@@ -1028,9 +1061,14 @@ function emitNoise(room, x, y, kind) {
   if (!killer) return;
   const distance = Math.sqrt(distanceSq(killer.x, killer.y, x, y));
   if (distance > NOISE_RANGE) return;
+  const map = MAPS[room.mapId];
+  const width = map.layout[0].length * TILE_SIZE;
+  const height = map.layout.length * TILE_SIZE;
+  const jitteredX = clamp(x + (Math.random() * 2 - 1) * NOISE_JITTER_PX, 0, width);
+  const jitteredY = clamp(y + (Math.random() * 2 - 1) * NOISE_JITTER_PX, 0, height);
   io.to(killer.id).emit('noise', {
-    x: Math.round(x),
-    y: Math.round(y),
+    x: Math.round(jitteredX),
+    y: Math.round(jitteredY),
     kind,
     distance: Math.round(distance),
   });
@@ -1901,6 +1939,8 @@ function serializePlayer(player, viewer) {
     lungeWindup: !!player.lungeWindupUntil && now < player.lungeWindupUntil,
     lungeRecovering: !!player.lungeRecoverUntil && now < player.lungeRecoverUntil,
     rooted: !!player.rootUntil && now < player.rootUntil,
+    stamina: isSelf && player.role === 'survivor' ? Math.round(((player.staminaMs != null ? player.staminaMs : SURVIVOR_MAX_STAMINA_MS) / SURVIVOR_MAX_STAMINA_MS) * 100) : 100,
+    hopping: now < (player.hopUntil || 0),
   };
 }
 
@@ -2244,6 +2284,7 @@ function updateTrackPings(room, killer, now) {
 
   for (const survivor of activeSurvivors(room)) {
     if (survivor.downed || survivor.dead || survivor.escaped) continue;
+    if ((survivor.stillMs || 0) > TRACK_MOVING_MEMORY_MS) continue;
     const distance = Math.sqrt(distanceSq(killer.x, killer.y, survivor.x, survivor.y));
     const angle =
       Math.atan2(survivor.y - killer.y, survivor.x - killer.x) +
@@ -2371,7 +2412,33 @@ function pickUpSupply(room, player) {
   return true;
 }
 
+function disarmTrap(room, player) {
+  if (player.role !== 'survivor' || player.downed || player.dead || player.morphed) return false;
+  let nearest = null;
+  let nearestDist = Infinity;
+  for (const trap of room.traps || []) {
+    const d = Math.sqrt(distanceSq(player.x, player.y, trap.x, trap.y));
+    if (d <= TRAP_DISARM_RANGE && d < nearestDist) {
+      nearest = trap;
+      nearestDist = d;
+    }
+  }
+  if (!nearest) return false;
+
+  room.traps = (room.traps || []).filter((t) => t.id !== nearest.id);
+  io.to(room.code).emit('trapDisarmed', {
+    id: player.id,
+    trapId: nearest.id,
+    x: nearest.x,
+    y: nearest.y,
+  });
+  emitNoise(room, nearest.x, nearest.y, 'trapDisarm');
+  addSystemChat(room, `${player.name} disarmed a bear trap.`);
+  return true;
+}
+
 function handleInteract(room, player) {
+  if (disarmTrap(room, player)) return;
   if (installPart(room, player)) return;
   if (pickUpPart(room, player)) return;
   pickUpSupply(room, player);
@@ -2566,8 +2633,9 @@ function handleSurvivorActions(room, player, now, dt, rooted) {
 
   const moving = input.up || input.down || input.left || input.right;
   if (!rooted && moving && now >= player.nextNoiseAt) {
-    player.nextNoiseAt = now + (player.wounded ? 680 : NOISE_STEP_MS);
-    emitNoise(room, player.x, player.y, player.wounded ? 'woundedStep' : 'step');
+    const isSprinting = !player.morphed && input.sprint && (player.staminaMs || 0) > 0;
+    player.nextNoiseAt = now + (player.wounded ? 680 : isSprinting ? SURVIVOR_SPRINT_NOISE_MS : NOISE_STEP_MS);
+    emitNoise(room, player.x, player.y, player.wounded ? 'woundedStep' : isSprinting ? 'sprintStep' : 'step');
   }
 }
 
@@ -2658,6 +2726,19 @@ function simulateRoom(room, dt) {
       if (player.role === 'survivor') {
         if (player.wounded) speed *= WOUNDED_SPEED_MULTIPLIER;
         if (player.carryingPart) speed *= 0.92;
+        if (!player.morphed && input.sprint && (player.staminaMs || 0) > 0) {
+          speed *= SURVIVOR_SPRINT_MULTIPLIER;
+          player.staminaMs = Math.max(0, (player.staminaMs || 0) - dt * 1000);
+          player.lastSprintAt = now;
+        } else if (now - (player.lastSprintAt || 0) > 900) {
+          player.staminaMs = Math.min(
+            SURVIVOR_MAX_STAMINA_MS,
+            (player.staminaMs || 0) + dt * SURVIVOR_STAMINA_RECOVER_PER_SECOND,
+          );
+        }
+        if (player.morphed && now < (player.hopUntil || 0)) {
+          speed *= PROP_HOP_BOOST_MULTIPLIER;
+        }
       }
       if (player.role === 'killer' && now < player.sprintUntil) {
         speed *= power.lungeSpeedMultiplier || LUNGE_SPEED_MULTIPLIER;
@@ -2676,6 +2757,12 @@ function simulateRoom(room, dt) {
       }
     } else {
       player.stillMs += dt * 1000;
+      if (player.role === 'survivor' && now - (player.lastSprintAt || 0) > 800) {
+        player.staminaMs = Math.min(
+          SURVIVOR_MAX_STAMINA_MS,
+          (player.staminaMs || 0) + dt * SURVIVOR_STAMINA_RECOVER_PER_SECOND,
+        );
+      }
     }
 
     player.isRepairing = false;
@@ -3191,6 +3278,32 @@ io.on('connection', (socket) => {
     if (me.role !== 'killer') return;
     if (me.rootUntil > Date.now()) return;
     performAttack(room, me);
+  });
+
+  socket.on('propHop', () => {
+    const me = players.get(socket.id);
+    if (!me || me.role !== 'survivor' || !me.morphed || me.downed || me.dead || me.hiddenIn) return;
+    const now = Date.now();
+    if (now < (me.nextHopAt || 0)) return;
+    me.nextHopAt = now + PROP_HOP_COOLDOWN_MS;
+    me.hopUntil = now + PROP_HOP_DURATION_MS;
+    io.to(me.roomCode).emit('propHop', { id: me.id, x: Math.round(me.x), y: Math.round(me.y) });
+  });
+
+  socket.on('decoy', () => {
+    const me = players.get(socket.id);
+    if (!me || me.role !== 'survivor' || me.downed || me.dead || me.hiddenIn) return;
+    const room = rooms.get(me.roomCode);
+    if (!room || room.state !== 'playing') return;
+    const now = Date.now();
+    if (now < (me.nextDecoyAt || 0)) return;
+    me.nextDecoyAt = now + DECOY_COOLDOWN_MS;
+    const map = MAPS[room.mapId];
+    const targetX = clamp(me.x + Math.cos(me.angle) * DECOY_DISTANCE_PX, 48, (map.layout[0].length - 1) * 48);
+    const targetY = clamp(me.y + Math.sin(me.angle) * DECOY_DISTANCE_PX, 48, (map.layout.length - 1) * 48);
+    emitNoise(room, targetX, targetY, 'decoy');
+    io.to(room.code).emit('decoy', { id: me.id, x: Math.round(targetX), y: Math.round(targetY) });
+    addSystemChat(room, `${me.name} threw a noise decoy.`);
   });
 
   socket.on('disconnect', () => {
